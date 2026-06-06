@@ -1,0 +1,362 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================
+ * ZooTown — editorial / civic terminal
+ * Palette derived from: Missoula sky, Clark Fork water, newsprint,
+ * sagebrush, and a restrained civic red. No AI-purple gradients.
+ * ============================================================ */
+
+/* LIGHT MODE — warm newsprint */
+:root {
+  --button-outline: rgba(20, 28, 38, 0.12);
+  --badge-outline: rgba(20, 28, 38, 0.06);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(20, 28, 38, 0.04);
+  --elevate-2: rgba(20, 28, 38, 0.09);
+
+  --background: 36 24% 97%;            /* warm off-white newsprint */
+  --foreground: 220 30% 11%;           /* deep navy ink */
+  --border: 32 14% 86%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 30% 11%;
+  --card-border: 32 14% 88%;
+  --sidebar: 36 24% 95%;
+  --sidebar-foreground: 220 30% 11%;
+  --sidebar-border: 32 14% 86%;
+  --sidebar-primary: 158 52% 28%;      /* sagebrush / forest green */
+  --sidebar-primary-foreground: 36 24% 97%;
+  --sidebar-accent: 32 20% 90%;
+  --sidebar-accent-foreground: 220 30% 11%;
+  --sidebar-ring: 158 52% 28%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 30% 11%;
+  --popover-border: 32 14% 88%;
+  --primary: 158 52% 28%;              /* editorial green CTA */
+  --primary-foreground: 36 24% 97%;
+  --secondary: 32 18% 92%;
+  --secondary-foreground: 220 30% 11%;
+  --muted: 32 18% 93%;
+  --muted-foreground: 220 10% 38%;
+  --accent: 32 18% 92%;
+  --accent-foreground: 220 30% 11%;
+  --destructive: 6 68% 44%;            /* civic red */
+  --destructive-foreground: 36 24% 97%;
+  --input: 32 14% 80%;
+  --ring: 158 52% 28%;
+
+  --chart-1: 212 60% 36%;
+  --chart-2: 158 52% 28%;
+  --chart-3: 28 74% 46%;
+  --chart-4: 6 68% 44%;
+  --chart-5: 220 30% 22%;
+
+  /* Desk accents */
+  --desk-city: 212 60% 36%;            /* Clark Fork blue */
+  --desk-city-fg: 210 100% 97%;
+  --desk-business: 28 74% 44%;         /* copper / downtown brick */
+  --desk-business-fg: 36 24% 97%;
+  --desk-culture: 158 52% 28%;         /* sagebrush */
+  --desk-culture-fg: 36 24% 97%;
+  --desk-crime: 6 62% 40%;             /* muted public-safety red */
+  --desk-crime-fg: 36 24% 97%;
+  --desk-community: 340 60% 48%;       /* warm rose / civic heart */
+  --desk-community-fg: 36 24% 97%;
+  --desk-politics: 220 40% 30%;        /* neutral deep slate-navy */
+  --desk-politics-fg: 36 24% 97%;
+  --desk-sports: 28 88% 38%;           /* Griz maroon-orange */
+  --desk-sports-fg: 36 24% 97%;
+  --desk-health: 188 64% 30%;          /* clinical teal */
+  --desk-health-fg: 36 24% 97%;
+
+  --desk-events: 38 90% 45%;           /* amber/golden */
+  --desk-events-fg: 36 24% 97%;
+  --desk-people: 270 50% 50%;          /* violet */
+  --desk-people-fg: 36 24% 97%;
+  --desk-history: 25 35% 35%;          /* sepia */
+  --desk-history-fg: 36 24% 97%;
+  --desk-science_tech: 200 70% 40%;    /* cyan */
+  --desk-science_tech-fg: 36 24% 97%;
+
+  /* Political scope chip colors (neutral, non-partisan) */
+  --scope-local: 158 52% 32%;          /* same green family as sagebrush */
+  --scope-state: 212 60% 40%;          /* Clark Fork blue */
+  --scope-national: 32 70% 42%;        /* amber */
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: "Source Serif 4", "Source Serif Pro", "Iowan Old Style", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --radius: 0.5rem;
+
+  --shadow-2xs: 0px 1px 0px 0px hsl(220 30% 11% / 0.04);
+  --shadow-xs: 0px 1px 2px -1px hsl(220 30% 11% / 0.08);
+  --shadow-sm: 0 1px 2px 0 hsl(220 30% 11% / 0.06), 0 1px 3px -1px hsl(220 30% 11% / 0.08);
+  --shadow: 0 1px 3px 0 hsl(220 30% 11% / 0.08), 0 2px 6px -1px hsl(220 30% 11% / 0.06);
+  --shadow-md: 0 4px 8px -2px hsl(220 30% 11% / 0.10);
+  --shadow-lg: 0 10px 20px -6px hsl(220 30% 11% / 0.14);
+  --shadow-xl: 0 18px 40px -12px hsl(220 30% 11% / 0.20);
+  --shadow-2xl: 0 28px 60px -16px hsl(220 30% 11% / 0.28);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+/* DARK MODE — deep navy night-desk */
+.dark {
+  --button-outline: rgba(255, 255, 255, 0.10);
+  --badge-outline: rgba(255, 255, 255, 0.06);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.09);
+
+  --background: 220 28% 7%;
+  --foreground: 36 24% 96%;
+  --border: 220 18% 18%;
+  --card: 220 26% 10%;
+  --card-foreground: 36 24% 96%;
+  --card-border: 220 18% 17%;
+  --sidebar: 220 28% 9%;
+  --sidebar-foreground: 36 24% 96%;
+  --sidebar-border: 220 18% 17%;
+  --sidebar-primary: 158 46% 52%;
+  --sidebar-primary-foreground: 220 28% 7%;
+  --sidebar-accent: 220 22% 16%;
+  --sidebar-accent-foreground: 36 24% 96%;
+  --sidebar-ring: 158 46% 52%;
+  --popover: 220 28% 10%;
+  --popover-foreground: 36 24% 96%;
+  --popover-border: 220 18% 18%;
+  --primary: 158 46% 52%;
+  --primary-foreground: 220 28% 7%;
+  --secondary: 220 22% 16%;
+  --secondary-foreground: 36 24% 96%;
+  --muted: 220 22% 15%;
+  --muted-foreground: 220 10% 66%;
+  --accent: 220 22% 16%;
+  --accent-foreground: 36 24% 96%;
+  --destructive: 6 72% 58%;
+  --destructive-foreground: 220 28% 7%;
+  --input: 220 18% 24%;
+  --ring: 158 46% 52%;
+
+  --chart-1: 212 68% 62%;
+  --chart-2: 158 46% 55%;
+  --chart-3: 28 78% 62%;
+  --chart-4: 6 72% 62%;
+  --chart-5: 36 24% 90%;
+
+  --desk-city: 212 72% 62%;
+  --desk-city-fg: 220 28% 7%;
+  --desk-business: 28 78% 60%;
+  --desk-business-fg: 220 28% 7%;
+  --desk-culture: 158 46% 55%;
+  --desk-culture-fg: 220 28% 7%;
+  --desk-crime: 6 70% 60%;
+  --desk-crime-fg: 220 28% 7%;
+  --desk-community: 340 70% 66%;
+  --desk-community-fg: 220 28% 7%;
+  --desk-politics: 220 50% 68%;
+  --desk-politics-fg: 220 28% 7%;
+  --desk-sports: 28 84% 60%;
+  --desk-sports-fg: 220 28% 7%;
+  --desk-health: 188 60% 56%;
+  --desk-health-fg: 220 28% 7%;
+
+  --desk-events: 38 92% 58%;
+  --desk-events-fg: 220 28% 7%;
+  --desk-people: 270 55% 68%;
+  --desk-people-fg: 220 28% 7%;
+  --desk-history: 25 42% 52%;
+  --desk-history-fg: 220 28% 7%;
+  --desk-science_tech: 200 72% 56%;
+  --desk-science_tech-fg: 220 28% 7%;
+
+  --scope-local: 158 46% 58%;
+  --scope-state: 212 68% 64%;
+  --scope-national: 32 78% 62%;
+
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    font-feature-settings: "ss01", "cv11";
+  }
+  .font-serif {
+    font-family: var(--font-serif);
+  }
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.25);
+  }
+}
+
+/* Desk color utility classes */
+@layer utilities {
+  .desk-city { color: hsl(var(--desk-city)); }
+  .bg-desk-city { background-color: hsl(var(--desk-city)); color: hsl(var(--desk-city-fg)); }
+  .border-desk-city { border-color: hsl(var(--desk-city)); }
+
+  .desk-business { color: hsl(var(--desk-business)); }
+  .bg-desk-business { background-color: hsl(var(--desk-business)); color: hsl(var(--desk-business-fg)); }
+  .border-desk-business { border-color: hsl(var(--desk-business)); }
+
+  .desk-culture { color: hsl(var(--desk-culture)); }
+  .bg-desk-culture { background-color: hsl(var(--desk-culture)); color: hsl(var(--desk-culture-fg)); }
+  .border-desk-culture { border-color: hsl(var(--desk-culture)); }
+
+  .desk-crime { color: hsl(var(--desk-crime)); }
+  .bg-desk-crime { background-color: hsl(var(--desk-crime)); color: hsl(var(--desk-crime-fg)); }
+  .border-desk-crime { border-color: hsl(var(--desk-crime)); }
+
+  .desk-community { color: hsl(var(--desk-community)); }
+  .bg-desk-community { background-color: hsl(var(--desk-community)); color: hsl(var(--desk-community-fg)); }
+  .border-desk-community { border-color: hsl(var(--desk-community)); }
+
+  .desk-politics { color: hsl(var(--desk-politics)); }
+  .bg-desk-politics { background-color: hsl(var(--desk-politics)); color: hsl(var(--desk-politics-fg)); }
+  .border-desk-politics { border-color: hsl(var(--desk-politics)); }
+
+  .desk-sports { color: hsl(var(--desk-sports)); }
+  .bg-desk-sports { background-color: hsl(var(--desk-sports)); color: hsl(var(--desk-sports-fg)); }
+  .border-desk-sports { border-color: hsl(var(--desk-sports)); }
+
+  .desk-health { color: hsl(var(--desk-health)); }
+  .bg-desk-health { background-color: hsl(var(--desk-health)); color: hsl(var(--desk-health-fg)); }
+  .border-desk-health { border-color: hsl(var(--desk-health)); }
+
+  .desk-events { color: hsl(var(--desk-events)); }
+  .bg-desk-events { background-color: hsl(var(--desk-events)); color: hsl(var(--desk-events-fg)); }
+  .border-desk-events { border-color: hsl(var(--desk-events)); }
+
+  .desk-people { color: hsl(var(--desk-people)); }
+  .bg-desk-people { background-color: hsl(var(--desk-people)); color: hsl(var(--desk-people-fg)); }
+  .border-desk-people { border-color: hsl(var(--desk-people)); }
+
+  .desk-history { color: hsl(var(--desk-history)); }
+  .bg-desk-history { background-color: hsl(var(--desk-history)); color: hsl(var(--desk-history-fg)); }
+  .border-desk-history { border-color: hsl(var(--desk-history)); }
+
+  .desk-science_tech { color: hsl(var(--desk-science_tech)); }
+  .bg-desk-science_tech { background-color: hsl(var(--desk-science_tech)); color: hsl(var(--desk-science_tech-fg)); }
+  .border-desk-science_tech { border-color: hsl(var(--desk-science_tech)); }
+
+  .scope-local { color: hsl(var(--scope-local)); }
+  .bg-scope-local { background-color: hsl(var(--scope-local) / 0.12); color: hsl(var(--scope-local)); }
+  .border-scope-local { border-color: hsl(var(--scope-local) / 0.35); }
+
+  .scope-state { color: hsl(var(--scope-state)); }
+  .bg-scope-state { background-color: hsl(var(--scope-state) / 0.12); color: hsl(var(--scope-state)); }
+  .border-scope-state { border-color: hsl(var(--scope-state) / 0.35); }
+
+  .scope-national { color: hsl(var(--scope-national)); }
+  .bg-scope-national { background-color: hsl(var(--scope-national) / 0.12); color: hsl(var(--scope-national)); }
+  .border-scope-national { border-color: hsl(var(--scope-national) / 0.35); }
+
+  .pulse-dot::before {
+    content: "";
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background: hsl(var(--destructive));
+    margin-right: 0.5rem;
+    box-shadow: 0 0 0 0 hsl(var(--destructive) / 0.6);
+    animation: pulse-ring 1.8s ease-out infinite;
+    vertical-align: middle;
+  }
+  @keyframes pulse-ring {
+    0% { box-shadow: 0 0 0 0 hsl(var(--destructive) / 0.55); }
+    70% { box-shadow: 0 0 0 8px hsl(var(--destructive) / 0); }
+    100% { box-shadow: 0 0 0 0 hsl(var(--destructive) / 0); }
+  }
+
+  input[type='search']::-webkit-search-cancel-button { @apply hidden; }
+
+  [contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+  }
+
+  .no-default-hover-elevate {}
+  .no-default-active-elevate {}
+
+  .toggle-elevate::before,
+  .toggle-elevate-2::before {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    border-radius: inherit;
+    z-index: -1;
+  }
+  .toggle-elevate.toggle-elevated::before { background-color: var(--elevate-2); }
+  .border.toggle-elevate::before { inset: -1px; }
+
+  .hover-elevate:not(.no-default-hover-elevate),
+  .active-elevate:not(.no-default-active-elevate),
+  .hover-elevate-2:not(.no-default-hover-elevate),
+  .active-elevate-2:not(.no-default-active-elevate) {
+    position: relative;
+    z-index: 0;
+  }
+  .hover-elevate:not(.no-default-hover-elevate)::after,
+  .active-elevate:not(.no-default-active-elevate)::after,
+  .hover-elevate-2:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:not(.no-default-active-elevate)::after {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    border-radius: inherit;
+    z-index: 999;
+  }
+  .hover-elevate:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-1);
+  }
+  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-2);
+  }
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after { inset: -1px; }
+}
