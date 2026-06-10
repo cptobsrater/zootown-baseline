@@ -1,5 +1,5 @@
 export function Logo({ className = "" }: { className?: string }) {
-  // Custom monogram: "Z" with a mountain horizon — Missoula / ZooTown identity.
+  // Custom monogram: clean solid "Z" inside a rounded square. No accent lines.
   return (
     <svg
       viewBox="0 0 40 40"
@@ -9,21 +9,12 @@ export function Logo({ className = "" }: { className?: string }) {
       xmlns="http://www.w3.org/2000/svg"
     >
       <rect x="1" y="1" width="38" height="38" rx="9" stroke="currentColor" strokeWidth="1.5" />
-      {/* Z stroke */}
       <path
-        d="M11 12 H29 L12 27 H29"
+        d="M11 12 H29 L12 28 H29"
         stroke="currentColor"
-        strokeWidth="2.4"
+        strokeWidth="2.6"
         strokeLinecap="square"
         strokeLinejoin="miter"
-      />
-      {/* Mountain mark (accent) */}
-      <path
-        d="M8 31 L16 23 L22 27 L28 21 L32 31"
-        stroke="hsl(var(--primary))"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
       />
     </svg>
   );
