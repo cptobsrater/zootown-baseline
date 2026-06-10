@@ -39,50 +39,61 @@ function jsonLdEventParser(html: string, source: Source): RawItem[] {
   const seen = new Set<string>();
   const blockRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let m: RegExpExecArray | null;
-  while ((m = blockRe.exec(html)) !== null && items.length < 60) {
+
+  function addEvent(node: any) {
+    if (!node || typeof node !== "object") return;
+    // Handle a missing @type but recognizable event shape (Eventbrite ListItem.item).
+    const t = node["@type"];
+    const looksLikeEvent =
+      t === "Event" || t === "MusicEvent" || t === "TheaterEvent" ||
+      t === "SportsEvent" || t === "Festival" || t === "DanceEvent" ||
+      t === "ComedyEvent" || t === "EducationEvent" || t === "BusinessEvent" ||
+      t === "FoodEvent" || t === "ScreeningEvent" || t === "PublicationEvent" ||
+      t === "SocialEvent" || t === "ChildrensEvent" ||
+      (Array.isArray(t) && t.some((x) => /Event/i.test(String(x)))) ||
+      // Some sites omit @type but include startDate + name + url (Eventbrite does this)
+      (!t && typeof node.name === "string" && typeof node.startDate === "string" && typeof node.url === "string");
+    if (!looksLikeEvent) return;
+    const title = (node.name ?? "").toString().trim();
+    const startDate = (node.startDate ?? node.start ?? "").toString().trim();
+    const url = (node.url ?? node["@id"] ?? source.url ?? "").toString().trim();
+    if (!title || !startDate || !url) return;
+    if (seen.has(url)) return;
+    seen.add(url);
+    const venue = typeof node.location === "object"
+      ? (node.location?.name ?? node.location?.["@name"] ?? null)
+      : (typeof node.location === "string" ? node.location : null);
+    const description = (node.description ?? "").toString().trim().slice(0, 280);
+    const summaryParts: string[] = [];
+    if (startDate) summaryParts.push(startDate);
+    if (venue) summaryParts.push(String(venue));
+    if (description) summaryParts.push(description);
+    items.push({
+      title: title.slice(0, 220),
+      url,
+      categories: ["Event"],
+      summary: summaryParts.join(" · ") || undefined,
+      publishedAt: startDate, // calendar ingester reads this as event start time
+    });
+  }
+
+  while ((m = blockRe.exec(html)) !== null && items.length < 80) {
     let parsed: any;
     try {
       parsed = JSON.parse(m[1].trim());
     } catch {
       continue;
     }
-    // JSON-LD can be a single object, an array, or a @graph wrapper.
+    // Walk every node in the JSON-LD tree. Handles single objects, arrays,
+    // @graph wrappers, and Eventbrite-style ItemList / ListItem.item nesting.
     const stack: any[] = Array.isArray(parsed) ? [...parsed] : [parsed];
-    while (stack.length) {
+    while (stack.length && items.length < 80) {
       const node = stack.shift();
       if (!node || typeof node !== "object") continue;
       if (Array.isArray(node["@graph"])) stack.push(...node["@graph"]);
-      const t = node["@type"];
-      const isEvent =
-        t === "Event" ||
-        t === "MusicEvent" ||
-        t === "TheaterEvent" ||
-        t === "SportsEvent" ||
-        t === "Festival" ||
-        (Array.isArray(t) && t.some((x) => /Event/i.test(String(x))));
-      if (!isEvent) continue;
-      const title = (node.name ?? "").toString().trim();
-      const startDate = (node.startDate ?? node.start ?? "").toString().trim();
-      const url = (node.url ?? node["@id"] ?? source.url ?? "").toString().trim();
-      if (!title || !startDate || !url) continue;
-      if (seen.has(url)) continue;
-      seen.add(url);
-      // Build a summary from venue + description if available
-      const venue = typeof node.location === "object"
-        ? (node.location.name ?? node.location["@name"] ?? null)
-        : (typeof node.location === "string" ? node.location : null);
-      const description = (node.description ?? "").toString().trim().slice(0, 280);
-      const summaryParts: string[] = [];
-      if (startDate) summaryParts.push(startDate);
-      if (venue) summaryParts.push(String(venue));
-      if (description) summaryParts.push(description);
-      items.push({
-        title: title.slice(0, 220),
-        url,
-        categories: ["Event"],
-        summary: summaryParts.join(" · ") || undefined,
-        publishedAt: startDate, // calendar ingester reads this as event start time
-      });
+      if (Array.isArray(node.itemListElement)) stack.push(...node.itemListElement);
+      if (node.item && typeof node.item === "object") stack.push(node.item);
+      addEvent(node);
     }
   }
   return items;
