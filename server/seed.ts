@@ -1,4 +1,4 @@
-import type { InsertStory, InsertEvent, InsertSource } from "@shared/schema";
+import type { InsertStory, InsertEvent, InsertSource } from "../shared/schema.js";
 
 // Anchor date for seeds — posts are scheduled relative to NOW at startup.
 // We compute offsets (in minutes from now) and turn them into ISO strings at seed time.

@@ -4,7 +4,7 @@
  * Picks the next article from people-bank or history-bank, alternating desks.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { dailyWriteTick } from "../../server/history";
+import { dailyWriteTick } from "../../server/history.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const auth = req.headers.authorization;

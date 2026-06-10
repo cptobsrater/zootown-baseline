@@ -6,7 +6,7 @@
  * The daily writer pulls these in order and stops when the bank is exhausted.
  * Admin can extend the bank or write new entries directly through the UI.
  */
-import type { DraftArticle } from "./writer";
+import type { DraftArticle } from "./writer.js";
 
 export const HISTORY_BANK: DraftArticle[] = [
   {

@@ -16,3 +16,4 @@ data.db-journal
 .DS_Store
 .env.local
 export-data/
+.vercel

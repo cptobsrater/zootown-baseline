@@ -1,7 +1,7 @@
 // Admin-managed classification rules applied at ingest time.
 // Rules: set_desk (route), reject, set_kind (informational). Higher priority runs first.
-import { storage } from "../storage";
-import type { ClassificationRule, InsertStory, Source } from "@shared/schema";
+import { storage } from "../storage.js";
+import type { ClassificationRule, InsertStory, Source } from "../../shared/schema.js";
 
 let cache: ClassificationRule[] | null = null;
 let cacheLoadedAt = 0;

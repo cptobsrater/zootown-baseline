@@ -1,4 +1,4 @@
-import type { Source } from "@shared/schema";
+import type { Source } from "../../shared/schema.js";
 
 /** Raw item as returned by a fetcher, before normalization/dedupe/classification. */
 export interface RawItem {

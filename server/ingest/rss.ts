@@ -1,7 +1,7 @@
 import { XMLParser } from "fast-xml-parser";
-import type { Source } from "@shared/schema";
-import type { Fetcher, FetchResult, RawItem } from "./types";
-import { loadFixture } from "./fixtures";
+import type { Source } from "../../shared/schema.js";
+import type { Fetcher, FetchResult, RawItem } from "./types.js";
+import { loadFixture } from "./fixtures.js";
 
 const parser = new XMLParser({
   ignoreAttributes: false,

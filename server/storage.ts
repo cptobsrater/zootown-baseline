@@ -5,7 +5,7 @@
  * Tables are created via Supabase migrations (managed separately) — this
  * module does NOT create tables; it only reads/writes.
  */
-import { stories, events, sources, ingestRuns, storySources, storyEdits, historyStories, classificationRules, meta } from "@shared/schema";
+import { stories, events, sources, ingestRuns, storySources, storyEdits, historyStories, classificationRules, meta } from "../shared/schema.js";
 import type {
   Story,
   InsertStory,
@@ -23,11 +23,11 @@ import type {
   InsertJobPost,
   JobPostState,
   ClassificationRule,
-} from "@shared/schema";
+} from "../shared/schema.js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { eq, desc, asc, and, gte, or, isNull, sql, inArray } from "drizzle-orm";
-import { jobPosts } from "@shared/schema";
+import { jobPosts } from "../shared/schema.js";
 
 // ------ Connection ------
 const DATABASE_URL = process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? "";

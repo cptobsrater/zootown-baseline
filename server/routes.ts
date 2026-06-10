@@ -1,14 +1,14 @@
 import type { Express } from "express";
 import type { Server } from "node:http";
-import { storage } from "./storage";
+import { storage } from "./storage.js";
 import { z } from "zod";
-import { ingestAll, ingestSource } from "./ingest/ingester";
-import { rssFetcher } from "./ingest/rss";
-import { htmlFetcher } from "./ingest/html";
-import { headlessFetcher } from "./ingest/headless";
-import type { Source } from "@shared/schema";
-import { DESKS, SOURCE_CATEGORIES, FEED_TYPES, SOURCE_TYPES } from "@shared/schema";
-import { issueToken, revokeToken, requireAdmin, verifyPassword } from "./auth";
+import { ingestAll, ingestSource } from "./ingest/ingester.js";
+import { rssFetcher } from "./ingest/rss.js";
+import { htmlFetcher } from "./ingest/html.js";
+import { headlessFetcher } from "./ingest/headless.js";
+import type { Source } from "../shared/schema.js";
+import { DESKS, SOURCE_CATEGORIES, FEED_TYPES, SOURCE_TYPES } from "../shared/schema.js";
+import { issueToken, revokeToken, requireAdmin, verifyPassword } from "./auth.js";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // ----- Stories feed -----
@@ -170,7 +170,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       value: parsed.data.value, priority: parsed.data.priority ?? 0, notes: parsed.data.notes ?? null,
       active: parsed.data.active ?? true, createdAt: new Date().toISOString(), createdBy: "admin",
     } as any);
-    const { invalidateRuleCache } = await import("./ingest/rules");
+    const { invalidateRuleCache } = await import("./ingest/rules.js");
     invalidateRuleCache();
     res.json(created);
   });
@@ -181,7 +181,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const updated = await storage.updateClassificationRule(id, parsed.data as any);
     if (!updated) return res.status(404).json({ error: "Not found" });
-    const { invalidateRuleCache } = await import("./ingest/rules");
+    const { invalidateRuleCache } = await import("./ingest/rules.js");
     invalidateRuleCache();
     res.json(updated);
   });
@@ -190,7 +190,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
     const ok = await storage.deleteClassificationRule(id);
     if (!ok) return res.status(404).json({ error: "Not found" });
-    const { invalidateRuleCache } = await import("./ingest/rules");
+    const { invalidateRuleCache } = await import("./ingest/rules.js");
     invalidateRuleCache();
     res.json({ ok: true });
   });
@@ -625,7 +625,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const { addHistoryStory } = await import("./history");
+    const { addHistoryStory } = await import("./history.js");
     const story = await addHistoryStory(
       parsed.data.headline,
       parsed.data.summary,

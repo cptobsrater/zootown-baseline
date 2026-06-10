@@ -7,7 +7,7 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { Express } from "express";
-import { buildApp } from "../server/app";
+import { buildApp } from "../server/app.js";
 
 let appPromise: Promise<Express> | null = null;
 

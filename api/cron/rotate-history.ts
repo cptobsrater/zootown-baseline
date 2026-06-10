@@ -4,7 +4,7 @@
  * Picks ~100 articles per desk to surface on the public site.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { rotationTick } from "../../server/history";
+import { rotationTick } from "../../server/history.js";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const auth = req.headers.authorization;

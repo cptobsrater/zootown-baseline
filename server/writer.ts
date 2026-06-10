@@ -15,9 +15,9 @@
  * daily scheduler logs a warning. Admin can either add more entries to the
  * banks or write articles directly from /admin → History Pool.
  */
-import { storage } from "./storage";
-import { PEOPLE_BANK } from "./people-bank";
-import { HISTORY_BANK } from "./history-bank";
+import { storage } from "./storage.js";
+import { PEOPLE_BANK } from "./people-bank.js";
+import { HISTORY_BANK } from "./history-bank.js";
 
 export interface DraftArticle {
   headline: string;

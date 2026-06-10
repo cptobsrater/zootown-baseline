@@ -1,5 +1,5 @@
-import type { Source } from "@shared/schema";
-import type { RawItem } from "./types";
+import type { Source } from "../../shared/schema.js";
+import type { RawItem } from "./types.js";
 
 /**
  * Deterministic-but-rotating fixture pool per source. When the live fetcher

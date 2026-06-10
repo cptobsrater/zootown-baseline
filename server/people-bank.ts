@@ -3,7 +3,7 @@
  * the Missoula area and (b) figures instrumental in Missoula's development.
  * Each entry ~300 words. Wikipedia link cited as a reference.
  */
-import type { DraftArticle } from "./writer";
+import type { DraftArticle } from "./writer.js";
 
 export const PEOPLE_BANK: DraftArticle[] = [
   {

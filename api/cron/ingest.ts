@@ -4,8 +4,8 @@
  * Replaces the old `startScheduler()` setInterval that ran in dev.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { storage } from "../../server/storage";
-import { ingestSource } from "../../server/ingest/ingester";
+import { storage } from "../../server/storage.js";
+import { ingestSource } from "../../server/ingest/ingester.js";
 
 function dueNow(s: any, now: number): boolean {
   if (!s.active) return false;

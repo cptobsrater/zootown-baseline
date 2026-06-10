@@ -12,9 +12,9 @@
  *   the People desk and the History desk so the collection grows evenly.
  * - All articles publish directly; admin can edit/delete from the backend.
  */
-import { storage } from "./storage";
-import { HISTORY_SEED } from "./history-seed";
-import { generateNextArticle } from "./writer";
+import { storage } from "./storage.js";
+import { HISTORY_SEED } from "./history-seed.js";
+import { generateNextArticle } from "./writer.js";
 
 const VISIBLE_WINDOW = 100;          // rotating display per desk
 const ROTATION_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;   // 7 days

@@ -8,7 +8,7 @@
 import express, { type Express, type Response, type NextFunction } from "express";
 import type { Request } from "express";
 import { createServer, type Server } from "node:http";
-import { registerRoutes } from "./routes";
+import { registerRoutes } from "./routes.js";
 
 declare module "http" {
   interface IncomingMessage {

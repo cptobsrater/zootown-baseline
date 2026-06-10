@@ -1,5 +1,5 @@
-import type { Source, InsertStory, Desk, Status, PoliticalScope } from "@shared/schema";
-import type { RawItem } from "./types";
+import type { Source, InsertStory, Desk, Status, PoliticalScope } from "../../shared/schema.js";
+import type { RawItem } from "./types.js";
 
 /**
  * Canonicalize a URL for dedupe.

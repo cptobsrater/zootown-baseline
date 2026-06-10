@@ -7,10 +7,10 @@
  * declared in `vercel.json`.
  */
 import "dotenv/config";
-import { buildApp, log } from "./app";
-import { serveStatic } from "./static";
-import { startScheduler } from "./ingest/ingester";
-import { seedHistoryIfEmpty, startLongFormScheduler } from "./history";
+import { buildApp, log } from "./app.js";
+import { serveStatic } from "./static.js";
+import { startScheduler } from "./ingest/ingester.js";
+import { seedHistoryIfEmpty, startLongFormScheduler } from "./history.js";
 
 process.on("uncaughtException", (err) => {
   console.error("[fatal] uncaughtException:", err);
@@ -27,7 +27,7 @@ process.on("unhandledRejection", (reason) => {
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
-    const { setupVite } = await import("./vite");
+    const { setupVite } = await import("./vite.js");
     await setupVite(httpServer, app);
   }
 

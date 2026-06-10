@@ -1,5 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
-import { fetchZipRecruiterJobs, type RawJob } from "./headless";
+import { fetchZipRecruiterJobs, type RawJob } from "./headless.js";
 
 /**
  * Jobs aggregation — pulls live job postings from Indeed RSS, ZipRecruiter (headless),

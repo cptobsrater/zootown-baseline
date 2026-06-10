@@ -1,4 +1,4 @@
-import type { InsertHistoryStory } from "@shared/schema";
+import type { InsertHistoryStory } from "../shared/schema.js";
 
 export type HistoryStoryInput = Omit<InsertHistoryStory, "publishedAt" | "lastBumpedAt">;
 

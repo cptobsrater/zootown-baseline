@@ -1,11 +1,11 @@
-import type { Source } from "@shared/schema";
-import { storage } from "../storage";
-import { rssFetcher } from "./rss";
-import { htmlFetcher } from "./html";
-import { headlessFetcher } from "./headless";
-import { canonicalizeUrl, toInsertStory, shouldSkipItem } from "./normalize";
-import { applyClassificationRules, bumpHitCounts } from "./rules";
-import type { FetchResult } from "./types";
+import type { Source } from "../../shared/schema.js";
+import { storage } from "../storage.js";
+import { rssFetcher } from "./rss.js";
+import { htmlFetcher } from "./html.js";
+import { headlessFetcher } from "./headless.js";
+import { canonicalizeUrl, toInsertStory, shouldSkipItem } from "./normalize.js";
+import { applyClassificationRules, bumpHitCounts } from "./rules.js";
+import type { FetchResult } from "./types.js";
 
 export interface RunSummary {
   sourceId: number;
