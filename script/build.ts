@@ -1,9 +1,17 @@
+/**
+ * Build script — Vercel-aware.
+ *
+ * - In all cases: build the Vite client to `dist/public` (served as static assets).
+ * - In a Vercel build (VERCEL=1): stop there. Vercel auto-compiles each `api/*.ts`
+ *   into its own serverless function — we don't need to produce `dist/index.cjs`.
+ * - Locally (or in a non-Vercel host): also bundle the Express server entrypoint
+ *   to `dist/index.cjs` so `npm start` works for a long-running Node process.
+ */
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "node:fs/promises";
 
-// server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
+// Server deps to bundle to reduce openat(2) syscalls at cold start.
 const allowlist = [
   "@google/generative-ai",
   "axios",
@@ -22,6 +30,7 @@ const allowlist = [
   "openai",
   "passport",
   "passport-local",
+  "postgres",
   "stripe",
   "uuid",
   "ws",
@@ -35,6 +44,11 @@ async function buildAll() {
 
   console.log("building client...");
   await viteBuild();
+
+  if (process.env.VERCEL) {
+    console.log("VERCEL build detected — skipping server bundle (api/*.ts are compiled by Vercel)");
+    return;
+  }
 
   console.log("building server...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));

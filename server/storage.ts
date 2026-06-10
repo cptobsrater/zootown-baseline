@@ -42,6 +42,7 @@ const queryClient = postgres(DATABASE_URL || "postgres://invalid", {
   prepare: false, // Supabase pooler doesn't support named prepared statements
   idle_timeout: 20,
   connect_timeout: 10,
+  ssl: "require", // Supabase requires SSL
 });
 
 export const db = drizzle(queryClient);
