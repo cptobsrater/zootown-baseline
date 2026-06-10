@@ -1,10 +1,12 @@
+import { useState } from "react";
 import { Wordmark } from "./Logo";
 import { useTheme } from "@/lib/theme";
-import { Search, Sun, Moon, Info } from "lucide-react";
+import { Search, Sun, Moon, Info, Calendar } from "lucide-react";
 import { type DeskId, DESK_META } from "@/lib/format";
 import { Link, useLocation } from "wouter";
 import { CitySwitcher } from "./CitySwitcher";
 import { useCity } from "@/lib/city-context";
+import { MobileCalendarSheet } from "./MobileCalendarSheet";
 
 interface Props {
   desk: "all" | DeskId;
@@ -38,6 +40,7 @@ export function TopBar({
   const { theme, toggle } = useTheme();
   const [location, navigate] = useLocation();
   const { currentCity } = useCity();
+  const [mobileCalOpen, setMobileCalOpen] = useState(false);
   // Home is now the city root: /missoula, /billings, etc.
   const onHome = /^\/[a-z_]+\/?$/i.test(location);
 
@@ -85,6 +88,16 @@ export function TopBar({
               className="w-full rounded-md border border-input bg-background/80 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground/80 focus:border-ring focus:ring-2 focus:ring-ring/25"
             />
           </label>
+          {/* Mobile-only calendar icon — opens the full-screen calendar sheet.
+              Desktop users still use the Calendar link in the desk-tab row. */}
+          <button
+            onClick={() => setMobileCalOpen(true)}
+            data-testid="button-mobile-calendar"
+            aria-label="Open calendar"
+            className="md:hidden inline-flex h-9 w-9 items-center justify-center rounded-md border border-border bg-background text-foreground hover-elevate"
+          >
+            <Calendar className="h-4 w-4" />
+          </button>
           <button
             onClick={onOpenSources}
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-2 text-xs font-medium text-foreground hover-elevate sm:px-3"
@@ -104,6 +117,9 @@ export function TopBar({
           </button>
         </div>
       </div>
+
+      {/* Mobile-only calendar sheet (rendered here so it sits above page content) */}
+      <MobileCalendarSheet open={mobileCalOpen} onOpenChange={setMobileCalOpen} />
 
       {/* Desk tabs */}
       <nav
