@@ -8,6 +8,7 @@ import { Link } from "wouter";
 import { MapPin, ArrowRight } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { Wordmark } from "@/components/Logo";
+import { GetApp } from "@/components/GetApp";
 import { useTheme } from "@/lib/theme";
 import { Sun, Moon } from "lucide-react";
 import type { City } from "@/lib/city-context";
@@ -91,6 +92,16 @@ export default function Landing() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Get App section */}
+        <div className="mt-12 md:mt-16">
+          <div className="mb-4 flex items-center justify-center gap-2 font-mono text-[0.64rem] uppercase tracking-[0.22em] text-muted-foreground">
+            <span className="h-px w-8 bg-border" />
+            Install ZooTown
+            <span className="h-px w-8 bg-border" />
+          </div>
+          <GetApp />
         </div>
 
         {/* Footer note */}
