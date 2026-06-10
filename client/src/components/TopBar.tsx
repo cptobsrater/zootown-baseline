@@ -62,6 +62,7 @@ export function TopBar({
   }
 
   return (
+    <>
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-5 md:px-6 lg:py-3.5">
         {/* Left: logo + location (same row on mobile and desktop) */}
@@ -117,9 +118,6 @@ export function TopBar({
           </button>
         </div>
       </div>
-
-      {/* Mobile-only calendar sheet (rendered here so it sits above page content) */}
-      <MobileCalendarSheet open={mobileCalOpen} onOpenChange={setMobileCalOpen} />
 
       {/* Desk tabs */}
       <nav
@@ -177,5 +175,9 @@ export function TopBar({
         </ul>
       </nav>
     </header>
+    {/* Render the mobile calendar sheet OUTSIDE the header so it isn't trapped
+        in the header's sticky stacking context. */}
+    <MobileCalendarSheet open={mobileCalOpen} onOpenChange={setMobileCalOpen} />
+    </>
   );
 }
