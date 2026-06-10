@@ -21,10 +21,8 @@ const TABS: Array<{ id: "all" | DeskId; label: string }> = [
   { id: "sports", label: "Sports" },
   { id: "health", label: "Health" },
   { id: "events", label: "Events" },
-  { id: "politics", label: "Politics" },
   { id: "people", label: "People" },
   { id: "history", label: "History" },
-  { id: "science_tech", label: "Science Tech" },
 ];
 
 export function TopBar({
@@ -67,14 +65,6 @@ export function TopBar({
           <span className="hidden md:inline-flex items-center gap-1 rounded-full border border-border bg-secondary/50 px-2.5 py-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
             <MapPin className="h-3 w-3" />
             Missoula, MT
-          </span>
-          <span
-            className="hidden sm:inline-flex items-center rounded-full border border-destructive/30 bg-destructive/10 px-2.5 py-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-destructive pulse-dot"
-            title={lastUpdatedLabel}
-            data-testid="chip-live"
-          >
-            <span className="hidden lg:inline">Live · updates every 5 min</span>
-            <span className="lg:hidden">Live</span>
           </span>
         </div>
 

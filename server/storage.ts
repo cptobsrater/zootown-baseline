@@ -1,4 +1,4 @@
-import { stories, events, sources, ingestRuns, storySources, storyEdits, historyStories, meta } from "@shared/schema";
+import { stories, events, sources, ingestRuns, storySources, storyEdits, historyStories, classificationRules, meta } from "@shared/schema";
 import type {
   Story,
   InsertStory,
@@ -15,6 +15,7 @@ import type {
   JobPost,
   InsertJobPost,
   JobPostState,
+  ClassificationRule,
 } from "@shared/schema";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
@@ -75,6 +76,20 @@ CREATE TABLE IF NOT EXISTS sources (
   last_mode TEXT,
   last_error TEXT,
   last_items INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  trust_score INTEGER NOT NULL DEFAULT 50
+);
+CREATE TABLE IF NOT EXISTS classification_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  match_field TEXT NOT NULL,
+  pattern TEXT NOT NULL,
+  action TEXT NOT NULL,
+  value TEXT NOT NULL,
+  priority INTEGER NOT NULL DEFAULT 0,
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  created_by TEXT NOT NULL DEFAULT 'admin',
+  hit_count INTEGER NOT NULL DEFAULT 0,
   active INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS ingest_runs (
@@ -113,6 +128,8 @@ CREATE TABLE IF NOT EXISTS history_stories (
   headline TEXT NOT NULL,
   summary TEXT NOT NULL,
   source_url TEXT,
+  desk TEXT NOT NULL DEFAULT 'history',
+  kind TEXT NOT NULL DEFAULT 'history',
   published_at TEXT NOT NULL,
   last_bumped_at TEXT NOT NULL
 );
@@ -235,6 +252,68 @@ function seedIfEmpty() {
 
 seedIfEmpty();
 
+// ------ Retired-desk migration ------
+// Politics and Science/Tech are no longer desk categories. Remap any existing
+// rows so they stop appearing in the navigation. Idempotent.
+function migrateRetiredDesks() {
+  try {
+    const s = sqlite
+      .prepare(
+        "UPDATE stories SET desk = CASE desk WHEN 'politics' THEN 'city' WHEN 'science_tech' THEN 'business' END, political_scope = NULL WHERE desk IN ('politics', 'science_tech')",
+      )
+      .run();
+    const e = sqlite
+      .prepare(
+        "UPDATE events SET desk = CASE desk WHEN 'politics' THEN 'city' WHEN 'science_tech' THEN 'business' END WHERE desk IN ('politics', 'science_tech')",
+      )
+      .run();
+    if ((s.changes ?? 0) + (e.changes ?? 0) > 0) {
+      console.log(`[storage] retired-desk migration remapped ${s.changes} stories, ${e.changes} events`);
+    }
+  } catch (err) {
+    console.warn("[storage] retired-desk migration skipped:", err);
+  }
+}
+migrateRetiredDesks();
+
+// ------ history_stories column adds (idempotent) ------
+function ensureHistoryColumns() {
+  const cols = sqlite.prepare(`PRAGMA table_info(history_stories)`).all() as Array<{ name: string }>;
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("desk")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN desk TEXT NOT NULL DEFAULT 'history'`);
+  if (!names.has("kind")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN kind TEXT NOT NULL DEFAULT 'history'`);
+}
+ensureHistoryColumns();
+
+// ------ sources.trust_score (idempotent) ------
+function ensureSourceTrustColumn() {
+  const cols = sqlite.prepare(`PRAGMA table_info(sources)`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "trust_score")) {
+    sqlite.exec(`ALTER TABLE sources ADD COLUMN trust_score INTEGER NOT NULL DEFAULT 50`);
+  }
+}
+ensureSourceTrustColumn();
+
+// ------ Seed default classification rules (only if table empty) ------
+function seedClassificationRulesIfEmpty() {
+  const count = (sqlite.prepare("SELECT COUNT(*) AS c FROM classification_rules").get() as { c: number }).c;
+  if (count > 0) return;
+  const now = new Date().toISOString();
+  const defaults = [
+    { mf: "text", pat: "obituary", act: "set_desk", val: "people", pri: 100, n: "Obituaries always route to People desk" },
+    { mf: "text", pat: "obituaries", act: "set_desk", val: "people", pri: 100, n: "Obituaries always route to People desk" },
+    { mf: "text", pat: "in memoriam", act: "set_desk", val: "people", pri: 100, n: "Memorials route to People desk" },
+    { mf: "text", pat: "passed away", act: "set_desk", val: "people", pri: 90, n: "Death notices route to People desk" },
+    { mf: "text", pat: "funeral service", act: "set_desk", val: "people", pri: 90, n: "Funeral notices route to People desk" },
+  ];
+  const stmt = sqlite.prepare(
+    `INSERT INTO classification_rules (match_field, pattern, action, value, priority, notes, created_at, created_by, hit_count, active) VALUES (?, ?, ?, ?, ?, ?, ?, 'system', 0, 1)`,
+  );
+  for (const r of defaults) stmt.run(r.mf, r.pat, r.act, r.val, r.pri, r.n, now);
+  console.log(`[storage] seeded ${defaults.length} default classification rules`);
+}
+seedClassificationRulesIfEmpty();
+
 // ------ One-shot v2 backfill ------
 // Re-classify stories using the new predictor (culture/community → events/people/city/etc).
 // Idempotent: only runs if meta.backfilled_v2 is missing.
@@ -286,6 +365,57 @@ function backfillV2IfNeeded() {
 }
 backfillV2IfNeeded();
 
+// ------ Geo-strict purge (one-shot, idempotent via meta key) ------
+function purgeNonLocalIfNeeded() {
+  try {
+    sqlite.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+    const META_KEY = "geo_strict_purge_v1";
+    const existing = sqlite.prepare("SELECT value FROM meta WHERE key = ?").get(META_KEY) as { value: string } | undefined;
+    if (existing) return;
+    const signals = [
+      "missoula", "montana", "mt.", ", mt", "griz", "grizzlies", "university of montana", "umt",
+      "bozeman", "helena", "butte", "kalispell", "billings", "great falls", "hamilton", "stevensville",
+      "lolo", "florence", "superior", "frenchtown", "bonner", "clinton",
+      "clark fork", "bitterroot", "rattlesnake", "blackfoot",
+      "daines", "tester", "gianforte", "zinke", "bullock", "rosendale",
+      "missoulian", "kpax", "mtpr", "montana free press", "missoula current",
+      "hellgate", "sentinel high", "big sky high", "loyola sacred heart",
+      "flathead", "glacier county", "yellowstone county", "gallatin county", "ravalli county",
+      "big sky", "whitefish", "polson", "havre", "miles city", "glendive", "sidney", "livingston",
+    ];
+    const wire = [
+      "(ap)", "— ap", "associated press", "reuters", "(afp)", "agence france", "bloomberg news",
+      "washington (", "washington —", "new york (", "new york —", "los angeles (",
+      "london (", "london —", "beijing (", "moscow (", "paris (", "berlin (",
+      "-- ap", "by the associated press",
+    ];
+    const rows = sqlite.prepare("SELECT id, desk, headline, summary, source_url FROM stories").all() as Array<{ id: number; desk: string; headline: string; summary: string; source_url: string }>;
+    let demoted = 0;
+    let demotedCrime = 0;
+    for (const r of rows) {
+      const text = `${r.headline ?? ""} ${r.summary ?? ""}`.toLowerCase();
+      const hasSignal = signals.some((s) => text.includes(s));
+      const hasWire = wire.some((m) => text.includes(m));
+      let fromMTSource = false;
+      try {
+        const host = new URL(r.source_url).hostname.toLowerCase();
+        fromMTSource = /missoula|missoulian|kpax|mtpr|montana|missoulacurrent|missoulaindependent|bozeman|flathead|helena|billings|kxlf|ktvq|kbzk|nbcmontana|montanapublicradio|montanafreepress|missoulaevents|logjam|destinationmissoula|gatherboard|griztix|zootown/.test(host);
+      } catch {}
+      const keep = r.desk === "crime" ? (hasSignal && !hasWire) : ((hasSignal || fromMTSource) && !hasWire);
+      if (!keep) {
+        sqlite.prepare("UPDATE stories SET mod_state = 'rejected' WHERE id = ?").run(r.id);
+        demoted++;
+        if (r.desk === "crime") demotedCrime++;
+      }
+    }
+    sqlite.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(META_KEY, new Date().toISOString());
+    if (demoted > 0) console.log(`[storage] geo-strict purge marked ${demoted} stories rejected (${demotedCrime} from crime desk)`);
+  } catch (err) {
+    console.warn("[storage] geo-strict purge skipped:", err);
+  }
+}
+purgeNonLocalIfNeeded();
+
 // ------ Storage interface ------
 
 export interface StoryQuery {
@@ -327,7 +457,15 @@ export interface IStorage {
   recentEditPatterns(days?: number): Array<{ sourceName: string; field: string; count: number }>;
   createSource(input: InsertSource): Source;
   deleteSource(id: number): boolean;
+  updateSource(id: number, patch: Partial<InsertSource>): Source | null;
+  bumpSourceTrust(id: number, delta: number): void;
   updateSourceCategoryPriority(id: number, categoryPriority: string[]): void;
+  // Classification rules
+  listClassificationRules(): ClassificationRule[];
+  createClassificationRule(input: Omit<ClassificationRule, "id" | "hitCount">): ClassificationRule;
+  updateClassificationRule(id: number, patch: Partial<Omit<ClassificationRule, "id">>): ClassificationRule | null;
+  deleteClassificationRule(id: number): boolean;
+  incrementRuleHitCount(id: number): void;
   // History stories
   listHistoryStories(): HistoryStory[];
   createHistoryStory(input: InsertHistoryStory): HistoryStory;
@@ -633,6 +771,97 @@ export class DatabaseStorage implements IStorage {
       .run(JSON.stringify(categoryPriority), id);
   }
 
+  updateSource(id: number, patch: Partial<InsertSource>): Source | null {
+    const allowed: Array<[keyof InsertSource, string]> = [
+      ["name", "name"], ["url", "url"], ["feedUrl", "feed_url"], ["feedType", "feed_type"],
+      ["parserKey", "parser_key"], ["sourceType", "source_type"], ["desks", "desks"],
+      ["categoryPriority", "category_priority"], ["cadenceMinutes", "cadence_minutes"],
+      ["active", "active"], ["category", "category"], ["handle", "handle"], ["platform", "platform"],
+      ["trustScore", "trust_score"],
+    ];
+    const sets: string[] = [];
+    const vals: any[] = [];
+    for (const [key, col] of allowed) {
+      if (key in patch) {
+        sets.push(`${col} = ?`);
+        let v: any = (patch as any)[key];
+        if (key === "desks" && Array.isArray(v)) v = JSON.stringify(v);
+        if (key === "categoryPriority" && Array.isArray(v)) v = JSON.stringify(v);
+        if (key === "active" && typeof v === "boolean") v = v ? 1 : 0;
+        vals.push(v);
+      }
+    }
+    if (sets.length === 0) return this.getSource(id) ?? null;
+    vals.push(id);
+    const res = sqlite.prepare(`UPDATE sources SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+    if (res.changes === 0) return null;
+    return this.getSource(id) ?? null;
+  }
+
+  bumpSourceTrust(id: number, delta: number): void {
+    sqlite
+      .prepare(`UPDATE sources SET trust_score = MAX(0, MIN(100, trust_score + ?)) WHERE id = ?`)
+      .run(delta, id);
+  }
+
+  // ---- Classification rules ----
+  listClassificationRules(): ClassificationRule[] {
+    const rows = sqlite
+      .prepare(`SELECT * FROM classification_rules ORDER BY priority DESC, id ASC`)
+      .all() as any[];
+    return rows.map(rowToRule);
+  }
+
+  createClassificationRule(input: Omit<ClassificationRule, "id" | "hitCount">): ClassificationRule {
+    const res = sqlite
+      .prepare(
+        `INSERT INTO classification_rules (match_field, pattern, action, value, priority, notes, created_at, created_by, hit_count, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      )
+      .run(
+        input.matchField, input.pattern, input.action, input.value,
+        input.priority ?? 0, input.notes ?? null,
+        input.createdAt, input.createdBy ?? "admin",
+        input.active === false ? 0 : 1,
+      );
+    const row = sqlite.prepare(`SELECT * FROM classification_rules WHERE id = ?`).get(Number(res.lastInsertRowid)) as any;
+    return rowToRule(row);
+  }
+
+  updateClassificationRule(id: number, patch: Partial<Omit<ClassificationRule, "id">>): ClassificationRule | null {
+    const allowed: Array<[keyof ClassificationRule, string]> = [
+      ["matchField", "match_field"], ["pattern", "pattern"], ["action", "action"], ["value", "value"],
+      ["priority", "priority"], ["notes", "notes"], ["active", "active"],
+    ];
+    const sets: string[] = [];
+    const vals: any[] = [];
+    for (const [key, col] of allowed) {
+      if (key in patch) {
+        sets.push(`${col} = ?`);
+        let v: any = (patch as any)[key];
+        if (key === "active" && typeof v === "boolean") v = v ? 1 : 0;
+        vals.push(v);
+      }
+    }
+    if (sets.length === 0) {
+      const row = sqlite.prepare(`SELECT * FROM classification_rules WHERE id = ?`).get(id) as any;
+      return row ? rowToRule(row) : null;
+    }
+    vals.push(id);
+    const res = sqlite.prepare(`UPDATE classification_rules SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+    if (res.changes === 0) return null;
+    const row = sqlite.prepare(`SELECT * FROM classification_rules WHERE id = ?`).get(id) as any;
+    return row ? rowToRule(row) : null;
+  }
+
+  deleteClassificationRule(id: number): boolean {
+    const res = sqlite.prepare(`DELETE FROM classification_rules WHERE id = ?`).run(id);
+    return res.changes > 0;
+  }
+
+  incrementRuleHitCount(id: number): void {
+    sqlite.prepare(`UPDATE classification_rules SET hit_count = hit_count + 1 WHERE id = ?`).run(id);
+  }
+
   getTopStories(limit = 6) {
     // One story per desk, prefer recent + higher-risk. We pull a wider window
     // (2 weeks) so smaller desks still surface, then dedupe to one per desk.
@@ -671,9 +900,13 @@ export class DatabaseStorage implements IStorage {
   createHistoryStory(input: InsertHistoryStory): HistoryStory {
     const res = sqlite
       .prepare(
-        `INSERT INTO history_stories (headline, summary, source_url, published_at, last_bumped_at) VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO history_stories (headline, summary, source_url, desk, kind, published_at, last_bumped_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.headline, input.summary, input.sourceUrl ?? null, input.publishedAt, input.lastBumpedAt);
+      .run(
+        input.headline, input.summary, input.sourceUrl ?? null,
+        (input as any).desk ?? "history", (input as any).kind ?? "history",
+        input.publishedAt, input.lastBumpedAt,
+      );
     const row = sqlite.prepare(`SELECT * FROM history_stories WHERE id = ?`).get(Number(res.lastInsertRowid)) as any;
     return rowToHistoryStory(row);
   }
@@ -875,8 +1108,26 @@ function rowToHistoryStory(r: any): HistoryStory {
     headline: r.headline,
     summary: r.summary,
     sourceUrl: r.source_url ?? null,
+    desk: r.desk ?? "history",
+    kind: r.kind ?? "history",
     publishedAt: r.published_at,
     lastBumpedAt: r.last_bumped_at,
+  };
+}
+
+function rowToRule(r: any): ClassificationRule {
+  return {
+    id: r.id,
+    matchField: r.match_field,
+    pattern: r.pattern,
+    action: r.action,
+    value: r.value,
+    priority: r.priority ?? 0,
+    notes: r.notes ?? null,
+    createdAt: r.created_at,
+    createdBy: r.created_by ?? "admin",
+    hitCount: r.hit_count ?? 0,
+    active: r.active === 1 || r.active === true,
   };
 }
 

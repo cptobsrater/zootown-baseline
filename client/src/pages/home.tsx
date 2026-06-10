@@ -28,7 +28,7 @@ interface HistoryStory {
 
 const VALID_DESKS = [
   "all", "city", "business", "crime", "sports", "health",
-  "events", "politics", "people", "history", "science_tech",
+  "events", "people", "history",
 ] as const;
 
 function readPendingDesk(): "all" | DeskId {
@@ -78,17 +78,19 @@ export default function Home() {
     setNewPostsCount(0);
   }, [desk, debounced]);
 
-  // History desk: fetch from /api/history
+  // History + People desks: long-form articles come from /api/history (shared pool)
   const isHistoryDesk = desk === "history";
+  const isPeopleDesk = desk === "people";
   const isEventsDesk = desk === "events";
 
   const historyQuery = useQuery<HistoryStory[]>({
-    queryKey: ["/api/history"],
+    queryKey: ["/api/history", isPeopleDesk ? "people" : "history"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/history");
+      const url = isPeopleDesk ? "/api/history?desk=people" : "/api/history?desk=history";
+      const res = await apiRequest("GET", url);
       return (await res.json()) as HistoryStory[];
     },
-    enabled: isHistoryDesk,
+    enabled: isHistoryDesk || isPeopleDesk,
   });
 
   // Regular feed query — used for all desks except history
@@ -173,16 +175,25 @@ export default function Home() {
   // Convert history stories to Story-shaped objects for StoryCard
   const historyAsStories: Story[] = useMemo(() => {
     if (!historyQuery.data) return [];
-    return historyQuery.data.map((h) => ({
+    return historyQuery.data.map((h) => {
+      const stripped = h.summary.replace(/^#+\s+[^\n]+\n+/, "").trim();
+      const firstPara = stripped.split(/\n{2,}/)[0] ?? stripped;
+      const preview = firstPara.length > 320 ? firstPara.slice(0, 320).trim() + "…" : firstPara;
+      const deskId = (h.desk ?? "history") as "history" | "people";
+      const baseTags = deskId === "people" ? ["people", "missoula"] : ["history", "missoula"];
+      const kindTag = h.kind && h.kind !== "history" ? [h.kind] : [];
+      const sourceName = h.sourceUrl && /wikipedia\.org/i.test(h.sourceUrl) ? "Wikipedia" : "ZooTown History";
+      return ({
       id: h.id,
       headline: h.headline,
-      summary: h.summary.slice(0, 300).replace(/^#+\s+[^\n]+\n+/, "").trim() + "…",
+      summary: preview,
+      body: h.summary, // full markdown body for the drawer
       whyItMatters: null,
-      desk: "history" as const,
-      tags: JSON.stringify(["history", "missoula"]),
-      sourceName: "ZooTown History",
+      desk: deskId,
+      tags: JSON.stringify([...baseTags, ...kindTag]),
+      sourceName,
       sourceUrl: h.sourceUrl ?? "https://zootown.pplx.app",
-      sourceType: "Official",
+      sourceType: deskId === "people" ? "Profile" : "Official",
       publishedAt: h.lastBumpedAt,
       fetchedAt: h.publishedAt,
       location: "Missoula, MT",
@@ -192,8 +203,18 @@ export default function Home() {
       modState: "approved" as const,
       politicalScope: null,
       eventDate: null,
-    }));
+    }) as Story & { body: string };
+    });
   }, [historyQuery.data]);
+
+  // People desk merges long-form (history pool) with ingested people stories
+  const peopleDisplay: Story[] = useMemo(() => {
+    if (!isPeopleDesk) return items;
+    const longForm = historyAsStories;
+    const seen = new Set(longForm.map((s) => s.headline.toLowerCase()));
+    const rest = items.filter((s) => !seen.has(s.headline.toLowerCase()));
+    return [...longForm, ...rest];
+  }, [isPeopleDesk, items, historyAsStories]);
 
   // Events desk: sort by eventDate ascending, hide past events
   const eventsItems = useMemo(() => {
@@ -209,9 +230,19 @@ export default function Home() {
       });
   }, [items, isEventsDesk]);
 
-  const displayItems = isHistoryDesk ? historyAsStories : (isEventsDesk ? eventsItems : items);
+  const displayItems = isHistoryDesk
+    ? historyAsStories
+    : isPeopleDesk
+    ? peopleDisplay
+    : isEventsDesk
+    ? eventsItems
+    : items;
   const isLoading = isHistoryDesk ? historyQuery.isLoading : feed.isLoading;
-  const total = isHistoryDesk ? (historyAsStories.length) : (feed.data?.total ?? items.length);
+  const total = isHistoryDesk
+    ? historyAsStories.length
+    : isPeopleDesk
+    ? peopleDisplay.length
+    : (feed.data?.total ?? items.length);
 
   return (
     <div className="min-h-screen bg-background">
@@ -246,11 +277,6 @@ export default function Home() {
                 <h1 className="font-serif text-[1.65rem] leading-tight font-semibold tracking-tight text-foreground">
                   {desk === "all" ? "Live from Missoula" : DESK_META[desk as DeskId]?.label ?? desk}
                 </h1>
-                {desk === "politics" && (
-                  <p className="mt-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                    Neutral · candidates in their own words · local first
-                  </p>
-                )}
                 {desk === "history" && (
                   <p className="mt-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
                     Curated stories · rotated weekly · rooted in archival fact

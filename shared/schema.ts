@@ -10,12 +10,12 @@ export const DESKS = [
   "sports",
   "health",
   "events",
-  "politics",
   "people",
   "history",
-  "science_tech",
 ] as const;
 export type Desk = (typeof DESKS)[number];
+export const RETIRED_DESKS = ["politics", "science_tech"] as const;
+export type RetiredDesk = (typeof RETIRED_DESKS)[number];
 
 // Political scope — only applies to desk = "politics"
 export const POLITICAL_SCOPES = ["local", "state", "national"] as const;
@@ -84,14 +84,18 @@ export const insertEventSchema = createInsertSchema(events).omit({ id: true });
 export type InsertEvent = z.infer<typeof insertEventSchema>;
 export type EventItem = typeof events.$inferSelect;
 
-// History stories pool — curated, rotated weekly
+// History stories pool — long-form ZooTown-written articles for the History
+// AND People desks. The full markdown body lives in `summary`. Wikipedia is
+// cited via `sourceUrl` as a reference, not as the article itself.
 export const historyStories = sqliteTable("history_stories", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   headline: text("headline").notNull(),
-  summary: text("summary").notNull(), // markdown body — full story
-  sourceUrl: text("source_url"), // optional — Wikipedia or official archive link
-  publishedAt: text("published_at").notNull(), // ISO — set when added to pool
-  lastBumpedAt: text("last_bumped_at").notNull(), // ISO — updates when republished
+  summary: text("summary").notNull(), // markdown body — full ZooTown-written article
+  sourceUrl: text("source_url"), // optional — Wikipedia reference link
+  desk: text("desk").notNull().default("history"), // 'history' | 'people'
+  kind: text("kind").notNull().default("history"), // 'history' | 'profile' | 'obituary'
+  publishedAt: text("published_at").notNull(),
+  lastBumpedAt: text("last_bumped_at").notNull(),
 });
 
 export const insertHistoryStorySchema = createInsertSchema(historyStories).omit({ id: true });
@@ -158,11 +162,35 @@ export const sources = sqliteTable("sources", {
   category: text("category").notNull().default("official"), // official | news | calendars | social
   handle: text("handle"), // @-handle for social media sources
   platform: text("platform"), // x | facebook | instagram | youtube — null for non-social
+  trustScore: integer("trust_score").notNull().default(50), // 0–100; admin actions nudge this
 });
 
 export const insertSourceSchema = createInsertSchema(sources).omit({ id: true });
 export type InsertSource = z.infer<typeof insertSourceSchema>;
 export type Source = typeof sources.$inferSelect;
+
+// Admin-managed if-then classification rules applied at ingest time.
+export const RULE_FIELDS = ["headline", "summary", "text", "source"] as const;
+export type RuleField = (typeof RULE_FIELDS)[number];
+export const RULE_ACTIONS = ["set_desk", "reject", "set_kind"] as const;
+export type RuleAction = (typeof RULE_ACTIONS)[number];
+
+export const classificationRules = sqliteTable("classification_rules", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  matchField: text("match_field").notNull(),
+  pattern: text("pattern").notNull(),
+  action: text("action").notNull(),
+  value: text("value").notNull(),
+  priority: integer("priority").notNull().default(0),
+  notes: text("notes"),
+  createdAt: text("created_at").notNull(),
+  createdBy: text("created_by").notNull().default("admin"),
+  hitCount: integer("hit_count").notNull().default(0),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+});
+export const insertClassificationRuleSchema = createInsertSchema(classificationRules).omit({ id: true, hitCount: true });
+export type InsertClassificationRule = z.infer<typeof insertClassificationRuleSchema>;
+export type ClassificationRule = typeof classificationRules.$inferSelect;
 
 // Ingestion run log
 export const ingestRuns = sqliteTable("ingest_runs", {

@@ -58,15 +58,23 @@ export function startHistoryRotationScheduler() {
  * Add a new history story. If pool exceeds HISTORY_POOL_SIZE,
  * removes the one with the oldest publishedAt.
  */
-export function addHistoryStory(headline: string, summary: string, sourceUrl?: string) {
+export function addHistoryStory(
+  headline: string,
+  summary: string,
+  sourceUrl?: string,
+  desk: "history" | "people" = "history",
+  kind: "history" | "profile" | "obituary" = "history",
+) {
   const now = new Date().toISOString();
   const story = storage.createHistoryStory({
     headline,
     summary,
     sourceUrl: sourceUrl ?? null,
+    desk,
+    kind,
     publishedAt: now,
     lastBumpedAt: now,
-  });
+  } as any);
 
   // Trim pool if over max — remove oldest by publishedAt (not the new one)
   const all = storage.listHistoryStories().sort((a, b) => a.publishedAt.localeCompare(b.publishedAt));

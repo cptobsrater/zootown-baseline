@@ -78,7 +78,7 @@ export function StoryCard({ story, onOpen }: Props) {
             </span>
           </>
         )}
-        {desk === "politics" && story.politicalScope && (
+        {false && story.politicalScope && (
           <>
             <span className="text-[0.68rem] font-mono text-muted-foreground/70">·</span>
             <span

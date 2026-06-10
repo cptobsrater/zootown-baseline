@@ -7,6 +7,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { relativeTime } from "@/lib/format";
 import { AddSourceForm } from "@/components/admin/AddSourceForm";
 import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
+import { EditSourceModal } from "@/components/admin/EditSourceModal";
 import {
   Loader2,
   Play,
@@ -17,6 +18,7 @@ import {
   CheckCircle2,
   CircleDashed,
   Trash2,
+  Pencil,
 } from "lucide-react";
 
 export function SourcesPanel() {
@@ -29,6 +31,7 @@ export function SourcesPanel() {
   const [busyAll, setBusyAll] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [deleting, setDeleting] = useState<SourceWithCount | null>(null);
+  const [editing, setEditing] = useState<SourceWithCount | null>(null);
 
   const deleteMut = useMutation({
     mutationFn: async (id: number) => {
@@ -156,6 +159,14 @@ export function SourcesPanel() {
                 Run now
               </button>
               <button
+                onClick={() => setEditing(s)}
+                data-testid={`button-edit-source-${s.id}`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium hover-elevate active-elevate-2"
+                title="Edit source"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
                 onClick={() => setDeleting(s)}
                 data-testid={`button-delete-source-${s.id}`}
                 className="inline-flex items-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-1.5 text-xs font-medium text-destructive hover-elevate active-elevate-2"
@@ -169,6 +180,7 @@ export function SourcesPanel() {
       </ul>
 
       {showAdd && <AddSourceForm onClose={() => setShowAdd(false)} />}
+      {editing && <EditSourceModal source={editing} onClose={() => setEditing(null)} />}
       {deleting && (
         <ConfirmDialog
           title={`Delete "${deleting.name}"?`}

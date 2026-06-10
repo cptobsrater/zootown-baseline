@@ -4,6 +4,7 @@ import { rssFetcher } from "./rss";
 import { htmlFetcher } from "./html";
 import { headlessFetcher } from "./headless";
 import { canonicalizeUrl, toInsertStory, shouldSkipItem } from "./normalize";
+import { applyClassificationRules, bumpHitCounts } from "./rules";
 import type { FetchResult } from "./types";
 
 export interface RunSummary {
@@ -163,8 +164,10 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
       }
 
       // 3) Insert as a new story.
-      const insert = toInsertStory({ ...item, url: canonical }, source);
+      const baseInsert = toInsertStory({ ...item, url: canonical }, source);
+      const { story: insert, hits: ruleHits } = applyClassificationRules(baseInsert, source);
       const story = storage.createStory(insert);
+      if (ruleHits.length) bumpHitCounts(ruleHits);
       // Seed the join table with the primary source so the drawer can uniformly
       // enumerate sources later (even for single-source stories we know about one).
       storage.attachStorySource(story.id, {

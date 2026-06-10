@@ -19,6 +19,7 @@ import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
 import { EditPatternsPanel } from "@/components/admin/EditPatternsPanel";
 import { AddHistoryForm } from "@/components/admin/AddHistoryForm";
 import { JobModerationPanel } from "@/components/admin/JobModerationPanel";
+import { RulesPanel } from "@/components/admin/RulesPanel";
 import { type DeskId, parseTags, relativeTime } from "@/lib/format";
 import {
   ArrowLeft,
@@ -35,7 +36,7 @@ import {
   Briefcase,
 } from "lucide-react";
 
-type AdminSection = "moderation" | "sources" | "log" | "patterns" | "history" | "jobs";
+type AdminSection = "moderation" | "sources" | "rules" | "log" | "patterns" | "history" | "jobs";
 
 const TABS: Array<{ id: ModState; label: string; intent: string }> = [
   { id: "draft", label: "Drafts", intent: "Awaiting review" },
@@ -175,6 +176,7 @@ function AdminInner() {
           <div className="inline-flex flex-wrap rounded-lg border border-border bg-card p-1 text-xs">
             <SectionTab active={section === "moderation"} onClick={() => setSection("moderation")} icon={<Inbox className="h-3.5 w-3.5" />} label="Moderation" testId="admin-section-moderation" />
             <SectionTab active={section === "sources"} onClick={() => setSection("sources")} icon={<Radio className="h-3.5 w-3.5" />} label="Sources" testId="admin-section-sources" />
+            <SectionTab active={section === "rules"} onClick={() => setSection("rules")} icon={<History className="h-3.5 w-3.5" />} label="Rules" testId="admin-section-rules" />
             <SectionTab active={section === "log"} onClick={() => setSection("log")} icon={<ListOrdered className="h-3.5 w-3.5" />} label="Ingest log" testId="admin-section-log" />
             <SectionTab active={section === "patterns"} onClick={() => setSection("patterns")} icon={<History className="h-3.5 w-3.5" />} label="Overrides" testId="admin-section-patterns" />
             <SectionTab active={section === "history"} onClick={() => setSection("history")} icon={<History className="h-3.5 w-3.5" />} label="History Pool" testId="admin-section-history" />
@@ -186,6 +188,7 @@ function AdminInner() {
         {section === "log" && <IngestLogPanel />}
         {section === "patterns" && <EditPatternsPanel />}
         {section === "history" && <AddHistoryForm />}
+        {section === "rules" && <RulesPanel />}
         {section === "jobs" && <JobModerationPanel />}
 
         {section === "moderation" && (

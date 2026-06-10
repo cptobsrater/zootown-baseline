@@ -15,6 +15,7 @@ export function AddHistoryForm() {
   const [headline, setHeadline] = useState("");
   const [summary, setSummary] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
+  const [deskKind, setDeskKind] = useState<"history" | "profile" | "obituary">("history");
   const [msg, setMsg] = useState<string | null>(null);
 
   const { data: stories, isLoading } = useQuery<HistoryStory[]>({
@@ -27,11 +28,13 @@ export function AddHistoryForm() {
 
   const addMutation = useMutation({
     mutationFn: async () => {
-      const token = localStorage.getItem("admin_token") || sessionStorage.getItem("admin_token") || "";
+      const desk = deskKind === "history" ? "history" : "people";
       const res = await apiRequest("POST", "/api/admin/history", {
         headline,
         summary,
         sourceUrl: sourceUrl || undefined,
+        desk,
+        kind: deskKind,
       });
       if (!res.ok) {
         const err = await res.json();
@@ -95,6 +98,29 @@ export function AddHistoryForm() {
         </h2>
         <div className="space-y-4">
           <div>
+            <label className="block text-xs font-medium text-foreground mb-1">Type *</label>
+            <div className="flex flex-wrap gap-2">
+              {([
+                { id: "history", label: "History (History desk)" },
+                { id: "profile", label: "Notable person profile (People desk)" },
+                { id: "obituary", label: "Obituary (People desk)" },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setDeskKind(opt.id)}
+                  className={`rounded-md border px-3 py-1.5 text-xs ${
+                    deskKind === opt.id
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-input bg-background text-muted-foreground hover-elevate"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
             <label className="block text-xs font-medium text-foreground mb-1">Headline *</label>
             <input
               type="text"
@@ -145,7 +171,7 @@ export function AddHistoryForm() {
             {addMutation.isPending ? "Adding…" : "Add to Pool"}
           </button>
           <p className="text-[0.72rem] text-muted-foreground">
-            Adding a new story bumps the oldest out if the pool exceeds 10.
+            Adding a new story bumps the oldest out if the pool exceeds 10. The full markdown body is what readers see when they open the story — “Reference” points to Wikipedia as the cited source.
           </p>
         </div>
       </div>

@@ -4,7 +4,8 @@ import { apiRequest } from "@/lib/queryClient";
 import { DESK_META, type DeskId, parseTags, absoluteDate, relativeTime } from "@/lib/format";
 import { DeskBadge } from "./DeskBadge";
 import { Sheet, SheetContent, SheetHeader } from "@/components/ui/sheet";
-import { ExternalLink, MapPin, Clock, ShieldCheck, Layers } from "lucide-react";
+import { ExternalLink, MapPin, Clock, ShieldCheck, Layers, BookOpen } from "lucide-react";
+import { renderMarkdown } from "@/lib/markdown";
 
 interface Props {
   story: Story | null;
@@ -34,6 +35,7 @@ export function StoryDrawer({ story, open, onOpenChange, related = [], onOpenRel
   const deskMeta = DESK_META[desk];
   const attachedSources = detail?.sources ?? [];
   const extraSources = attachedSources.filter((s) => s.sourceUrl !== story.sourceUrl);
+  const isLongForm = Boolean((story as Story & { body?: string }).body);
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -80,7 +82,13 @@ export function StoryDrawer({ story, open, onOpenChange, related = [], onOpenRel
         </SheetHeader>
 
         <div className="px-6 pb-10 pt-2 space-y-6">
-          <p className="text-[0.98rem] leading-relaxed text-foreground/90">{story.summary}</p>
+          {(story as Story & { body?: string }).body ? (
+            <article className="prose-zootown">
+              {renderMarkdown((story as Story & { body?: string }).body!)}
+            </article>
+          ) : (
+            <p className="text-[0.98rem] leading-relaxed text-foreground/90">{story.summary}</p>
+          )}
 
           {story.whyItMatters && (
             <div className="rounded-lg border-l-2 border-primary bg-primary/5 px-4 py-3">
@@ -137,7 +145,11 @@ export function StoryDrawer({ story, open, onOpenChange, related = [], onOpenRel
             <div className="flex items-start justify-between gap-4">
               <div>
                 <div className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground mb-1">
-                  {extraSources.length > 0 ? "Primary source" : "Original source"}
+                  {isLongForm
+                    ? "Reference source"
+                    : extraSources.length > 0
+                    ? "Primary source"
+                    : "Original source"}
                 </div>
                 <div className="text-sm font-medium text-foreground">{story.sourceName}</div>
                 <div className="mt-1 text-xs text-muted-foreground break-all">{story.sourceUrl}</div>
@@ -149,8 +161,7 @@ export function StoryDrawer({ story, open, onOpenChange, related = [], onOpenRel
                 className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover-elevate active-elevate-2"
                 data-testid="link-read-original"
               >
-                Read original
-                <ExternalLink className="h-3.5 w-3.5" />
+                {isLongForm ? (<><BookOpen className="h-3.5 w-3.5" />Reference</>) : (<>Read original<ExternalLink className="h-3.5 w-3.5" /></>)}
               </a>
             </div>
 

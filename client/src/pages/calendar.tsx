@@ -22,6 +22,12 @@ import { useTheme } from "@/lib/theme";
 type ViewMode = "month" | "agenda";
 type DeskFilter = "all" | DeskId;
 
+// On phones, the month grid is too cramped — default to Agenda which lists events vertically.
+function initialViewForViewport(): ViewMode {
+  if (typeof window === "undefined") return "month";
+  return window.matchMedia("(max-width: 640px)").matches ? "agenda" : "month";
+}
+
 const DESK_ORDER: DeskId[] = [
   "city",
   "business",
@@ -29,10 +35,8 @@ const DESK_ORDER: DeskId[] = [
   "sports",
   "health",
   "events",
-  "politics",
   "people",
   "history",
-  "science_tech",
 ];
 
 function startOfDay(d: Date): Date {
@@ -95,7 +99,7 @@ export default function CalendarPage() {
   useTheme(); // ensures provider is present
 
   const [anchor, setAnchor] = useState<Date>(() => startOfMonth(new Date()));
-  const [view, setView] = useState<ViewMode>("month");
+  const [view, setView] = useState<ViewMode>(initialViewForViewport);
   const [activeDesks, setActiveDesks] = useState<Set<DeskFilter>>(new Set(["all"]));
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
@@ -300,7 +304,7 @@ export default function CalendarPage() {
         </div>
 
         {view === "month" ? (
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
             {/* Month grid */}
             <section aria-label="Month grid">
               {/* Month nav */}
@@ -366,7 +370,7 @@ export default function CalendarPage() {
                       key={i}
                       onClick={() => setSelectedDay(cell)}
                       data-testid={`day-cell-${cell.getFullYear()}-${cell.getMonth()}-${cell.getDate()}`}
-                      className={`group relative flex min-h-[90px] flex-col items-start gap-1 border-b border-r border-card-border p-2 text-left transition-colors hover-elevate ${
+                      className={`group relative flex min-h-[56px] sm:min-h-[90px] flex-col items-start gap-1 border-b border-r border-card-border p-1 sm:p-2 text-left transition-colors hover-elevate ${
                         i % 7 === 6 ? "border-r-0" : ""
                       } ${i >= 35 ? "border-b-0" : ""} ${
                         isCurrentMonth ? "bg-card" : "bg-background/60"
@@ -384,8 +388,8 @@ export default function CalendarPage() {
                         {cell.getDate()}
                       </span>
 
-                      {/* Event peek — titles on desktop, dots on small */}
-                      <div className="mt-0.5 w-full space-y-0.5">
+                      {/* Event titles: visible on >= sm. Hidden on phones, where the desk dot strip below carries the signal. */}
+                      <div className="mt-0.5 w-full space-y-0.5 hidden sm:block">
                         {dayEvents.slice(0, 3).map((e) => (
                           <div
                             key={e.id}
@@ -407,6 +411,12 @@ export default function CalendarPage() {
                           </div>
                         )}
                       </div>
+                      {/* Compact mobile peek: just the event count when there are any */}
+                      {hasEvents && (
+                        <div className="sm:hidden mt-0.5 text-[0.6rem] font-mono uppercase tracking-[0.12em] text-muted-foreground">
+                          {dayEvents.length}
+                        </div>
+                      )}
 
                       {/* Desk dot strip (bottom) — redundant visual cue */}
                       {hasEvents && (
@@ -437,10 +447,10 @@ export default function CalendarPage() {
               </div>
             </section>
 
-            {/* Day drill-down panel */}
+            {/* Day drill-down panel — stacks under grid on phones, sticky sidebar on desktop */}
             <aside
               aria-label="Day details"
-              className="sticky top-[144px] h-fit rounded-lg border border-card-border bg-card p-4"
+              className="lg:sticky lg:top-[144px] h-fit rounded-lg border border-card-border bg-card p-4"
               data-testid="panel-day-details"
             >
               {selectedDay ? (

@@ -55,6 +55,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         sourceName: before.sourceName,
         editedAt: new Date().toISOString(),
       });
+      try {
+        const delta = parsed.data.modState === "approved" ? 2 : parsed.data.modState === "rejected" ? -3 : 0;
+        if (delta !== 0) {
+          const src = storage.listSources().find((s) => s.name === before.sourceName);
+          if (src) storage.bumpSourceTrust(src.id, delta);
+        }
+      } catch {}
     }
     res.json(updated);
   });
@@ -133,6 +140,56 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       sourceName: before.sourceName,
       editedAt: new Date().toISOString(),
     });
+    try {
+      const src = storage.listSources().find((s) => s.name === before.sourceName);
+      if (src) storage.bumpSourceTrust(src.id, -4);
+    } catch {}
+    res.json({ ok: true });
+  });
+
+  // ----- Classification rules CRUD -----
+  app.get("/api/admin/rules", requireAdmin, (_req, res) => {
+    res.json({ rules: storage.listClassificationRules() });
+  });
+  const ruleInputSchema = z.object({
+    matchField: z.enum(["headline", "summary", "text", "source"]),
+    pattern: z.string().min(1).max(400),
+    action: z.enum(["set_desk", "reject", "set_kind"]),
+    value: z.string().max(60),
+    priority: z.number().int().min(0).max(1000).optional(),
+    notes: z.string().max(400).optional().nullable(),
+    active: z.boolean().optional(),
+  });
+  app.post("/api/admin/rules", requireAdmin, async (req, res) => {
+    const parsed = ruleInputSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const created = storage.createClassificationRule({
+      matchField: parsed.data.matchField, pattern: parsed.data.pattern, action: parsed.data.action,
+      value: parsed.data.value, priority: parsed.data.priority ?? 0, notes: parsed.data.notes ?? null,
+      active: parsed.data.active ?? true, createdAt: new Date().toISOString(), createdBy: "admin",
+    } as any);
+    const { invalidateRuleCache } = await import("./ingest/rules");
+    invalidateRuleCache();
+    res.json(created);
+  });
+  app.patch("/api/admin/rules/:id", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const parsed = ruleInputSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const updated = storage.updateClassificationRule(id, parsed.data as any);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    const { invalidateRuleCache } = await import("./ingest/rules");
+    invalidateRuleCache();
+    res.json(updated);
+  });
+  app.delete("/api/admin/rules/:id", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const ok = storage.deleteClassificationRule(id);
+    if (!ok) return res.status(404).json({ error: "Not found" });
+    const { invalidateRuleCache } = await import("./ingest/rules");
+    invalidateRuleCache();
     res.json({ ok: true });
   });
 
@@ -190,6 +247,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const ok = storage.deleteSource(id);
     if (!ok) return res.status(404).json({ error: "Not found" });
     res.json({ ok: true });
+  });
+
+  // Edit a source in place. Any subset of fields may be patched.
+  const patchSourceSchema = z.object({
+    name: z.string().min(2).max(120).optional(),
+    url: z.string().url().max(800).optional(),
+    feedUrl: z.string().url().max(800).nullable().optional(),
+    feedType: z.enum(FEED_TYPES).optional(),
+    parserKey: z.string().max(120).nullable().optional(),
+    sourceType: z.enum(SOURCE_TYPES).optional(),
+    desks: z.array(z.enum(DESKS)).optional(),
+    cadenceMinutes: z.number().int().min(1).max(60 * 24 * 7).optional(),
+    active: z.boolean().optional(),
+    category: z.enum(SOURCE_CATEGORIES).optional(),
+    handle: z.string().max(80).nullable().optional(),
+    platform: z.string().max(40).nullable().optional(),
+    trustScore: z.number().int().min(0).max(100).optional(),
+  });
+  app.patch("/api/admin/sources/:id", requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const parsed = patchSourceSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const updated = storage.updateSource(id, parsed.data as any);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    storage.logEdit({
+      storyId: 0, field: "source",
+      beforeValue: String(id), afterValue: JSON.stringify(parsed.data),
+      sourceName: updated.name, editedAt: new Date().toISOString(),
+    });
+    res.json(updated);
   });
 
   // Dry-run a source: fetch + parse, return what we'd ingest, DO NOT persist.
@@ -516,8 +604,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 
   // ----- History stories -----
-  app.get("/api/history", (_req, res) => {
-    res.json(storage.listHistoryStories());
+  app.get("/api/history", (req, res) => {
+    const desk = typeof req.query.desk === "string" ? req.query.desk : null;
+    const all = storage.listHistoryStories();
+    if (!desk) return res.json(all);
+    res.json(all.filter((h) => (h.desk ?? "history") === desk));
   });
 
   app.post("/api/admin/history", requireAdmin, async (req, res) => {
@@ -525,6 +616,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       headline: z.string().min(2).max(400),
       summary: z.string().min(10).max(20000),
       sourceUrl: z.string().url().max(800).optional().or(z.literal("")).optional(),
+      desk: z.enum(["history", "people"]).optional(),
+      kind: z.enum(["history", "profile", "obituary"]).optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -533,6 +626,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       parsed.data.headline,
       parsed.data.summary,
       parsed.data.sourceUrl || undefined,
+      parsed.data.desk ?? "history",
+      parsed.data.kind ?? "history",
     );
     res.json(story);
   });

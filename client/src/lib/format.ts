@@ -103,14 +103,6 @@ export const DESK_META = {
     color: "events" as const,
     letter: "E",
   },
-  politics: {
-    id: "politics" as const,
-    label: "Politics Desk",
-    short: "Politics",
-    description: "Elections, candidates, and ballot measures — local first, unbiased, in their own words.",
-    color: "politics" as const,
-    letter: "P",
-  },
   people: {
     id: "people" as const,
     label: "People",
@@ -126,14 +118,6 @@ export const DESK_META = {
     description: "Missoula's past — founding stories, turning points, and the events that shaped the valley.",
     color: "history" as const,
     letter: "H",
-  },
-  science_tech: {
-    id: "science_tech" as const,
-    label: "Science & Tech",
-    short: "Sci/Tech",
-    description: "Research breakthroughs, technology, NASA, AI, and the University of Montana's science labs.",
-    color: "science_tech" as const,
-    letter: "T",
   },
 };
 

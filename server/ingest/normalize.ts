@@ -33,25 +33,46 @@ export function canonicalizeUrl(raw: string): string {
   }
 }
 
-// Valid desks for v2
+// Valid desks for v2 (politics and science_tech retired — remapped at ingest)
 const VALID_DESKS = new Set<Desk>([
   "city", "business", "crime", "sports", "health",
-  "events", "politics", "people", "history", "science_tech",
+  "events", "people", "history",
 ]);
+
+// Remap retired desks at ingest. Politics → city. Science/Tech → business.
+function remapRetiredDesk(desk: string): Desk {
+  if (desk === "politics") return "city";
+  if (desk === "science_tech") return "business";
+  return desk as Desk;
+}
 
 // Montana/Missoula geo-relevance signals
 const GEO_SIGNALS = [
-  "missoula", "montana", "mt.", " mt ", "griz", "grizzlies", "university of montana", "umt",
+  "missoula", "montana", "mt.", ", mt", "griz", "grizzlies", "university of montana", "umt",
   "bozeman", "helena", "butte", "kalispell", "billings", "great falls", "hamilton", "stevensville",
   "lolo", "florence", "superior", "frenchtown", "bonner", "clinton",
   "clark fork", "bitterroot", "rattlesnake", "blackfoot",
   "daines", "tester", "gianforte", "zinke", "bullock", "rosendale",
   "missoulian", "kpax", "mtpr", "montana free press", "missoula current",
   "hellgate", "sentinel high", "big sky high", "loyola sacred heart",
+  "flathead", "glacier county", "yellowstone county", "gallatin county", "ravalli county",
+  "big sky", "whitefish", "polson", "havre", "miles city", "glendive", "sidney", "livingston",
+];
+
+// Bylines/datelines that almost always mean national wire content, NOT Montana-local
+const NATIONAL_WIRE_MARKERS = [
+  "(ap)", " — ap", "associated press", "reuters", "(afp)", "agence france", "bloomberg news",
+  "washington (", "washington —", "new york (", "new york —", "los angeles (",
+  "london (", "london —", "beijing (", "moscow (", "paris (", "berlin (",
+  "-- ap", "by the associated press",
 ];
 
 function hasGeoSignal(text: string): boolean {
   return GEO_SIGNALS.some((g) => text.includes(g));
+}
+
+function looksLikeNationalWire(text: string): boolean {
+  return NATIONAL_WIRE_MARKERS.some((m) => text.includes(m));
 }
 
 function isLocalMontanaSource(source: Source): boolean {
@@ -101,18 +122,7 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
   };
 
   // Science & Tech — global allowed, no geo gate
-  hit("science_tech", [
-    "artificial intelligence", " ai ", "machine learning", "deep learning", "neural network",
-    "language model", "gpt", "chatgpt", "openai", "anthropic", "google deepmind", "llm",
-    "semiconductor", "chip", "nvidia", "amd", "intel chip", "quantum computing",
-    "satellite", "nasa", "space launch", "rocket", "spacex", "boeing starliner",
-    "breakthrough research", "scientific study", "peer-reviewed", "published in nature",
-    "published in science", "university research", "clinical trial", "genome", "crispr",
-    "umt research", "university of montana research", "university of montana lab",
-    "national weather service", "nws", "weather technology", "seismic",
-  ], 2);
-
-  // Health — global allowed, no geo gate
+  // Health — Montana-tie required (gated below)
   hit("health", [
     "public health", "county health", "missoula city-county health", "health department",
     "hospital", "st. patrick hospital", "community medical center", "providence", "clinic",
@@ -178,8 +188,8 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
     "hockey", "soccer match", "track meet", "cross country", "wrestling meet",
   ], 2);
 
-  // Politics — MT/Missoula angle required
-  hit("politics", [
+  // Civic / political content used to be its own desk — now folded into "city".
+  hit("city", [
     "missoula city council", "missoula county commission", "missoula mayor", "city council vote",
     "county commission vote", "mt legislature", "montana legislature", "montana house",
     "montana senate", "state legislature", "governor gianforte", "gianforte",
@@ -189,28 +199,26 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
     "local candidate", "missoula candidate", "missoula school board", "trustee election",
     "primary election", "general election", "polling place", "voter registration",
     "missoula ward", "county seat", "legislative session",
-  ], 2);
+  ]);
 
   // --- Apply geo gate ---
-  // City, Business, Crime, Sports, Events, Politics, People, History require geo signal or local source
-  const geoGatedDesks: Desk[] = ["city", "business", "crime", "sports", "events", "politics", "people", "history"];
-  const isLocal = hasGeoSignal(text) || isLocalMontanaSource(source);
+  // EVERY desk requires a Montana/Missoula tie. There are no global desks.
+  const geoGatedDesks: Desk[] = ["city", "business", "crime", "sports", "health", "events", "people", "history"];
+  const hasTextSignal = hasGeoSignal(text);
+  const fromLocalSource = isLocalMontanaSource(source);
+  const wireMarker = looksLikeNationalWire(text);
 
+  // Crime is strictest: requires in-text Montana signal AND no national-wire marker.
+  const isLocalForCrime = hasTextSignal && !wireMarker;
+  // Other desks: text signal OR source domain, but wire markers still disqualify.
+  const isLocal = (hasTextSignal || fromLocalSource) && !wireMarker;
+
+  if (!isLocalForCrime) score["crime"] = 0;
   if (!isLocal) {
-    // Drop geo-gated desk scores to 0 for non-local content
     for (const d of geoGatedDesks) {
+      if (d === "crime") continue;
       score[d] = 0;
     }
-  }
-
-  // Politics extra check: must have MT/Missoula angle OR demote
-  if ((score["politics"] ?? 0) > 0 && !isLocal) {
-    score["politics"] = 0;
-  }
-  // If politics scored but no MT-angle keywords, demote
-  if ((score["politics"] ?? 0) > 0) {
-    const hasMtPoliticsSignal = /missoula|montana|gianforte|daines|tester|zinke|mt legislature|helena|missoula city council|county commission/.test(text);
-    if (!hasMtPoliticsSignal) score["politics"] = 0;
   }
 
   // Find highest scoring desk
@@ -260,10 +268,12 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
  * and isn't in a global-allowed desk (health, science_tech).
  */
 export function shouldRejectAsNonLocal(item: RawItem, source: Source, assignedDesk: Desk): boolean {
-  const globalDesks: Desk[] = ["health", "science_tech"];
-  if (globalDesks.includes(assignedDesk)) return false;
   const text = `${item.title} ${item.summary ?? ""}`.toLowerCase();
-  if (hasGeoSignal(text) || isLocalMontanaSource(source)) return false;
+  const hasTextSignal = hasGeoSignal(text);
+  const wireMarker = looksLikeNationalWire(text);
+  if (wireMarker) return true;
+  if (assignedDesk === "crime") return !hasTextSignal;
+  if (hasTextSignal || isLocalMontanaSource(source)) return false;
   return true;
 }
 
@@ -442,8 +452,8 @@ export function toInsertStory(item: RawItem, source: Source): InsertStory {
   const title = decodeEntities(item.title).trim();
   const rawSummary = decodeEntities((item.summary ?? item.title).replace(/\s+/g, " ").trim());
   const summary = truncateSummary(rawSummary);
-  const desk = classifyDesk({ ...item, title }, source);
-  const politicalScope = desk === "politics" ? inferPoliticalScope({ ...item, title }, source) : null;
+  const desk = remapRetiredDesk(classifyDesk({ ...item, title }, source));
+  const politicalScope = null; // politics desk retired
   const modState = shouldRejectAsNonLocal(item, source, desk) ? "rejected" : "approved";
   return {
     headline: title,

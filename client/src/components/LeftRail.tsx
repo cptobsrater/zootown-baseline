@@ -15,17 +15,15 @@ const DESK_ORDER: Array<"all" | DeskId> = [
   "sports",
   "health",
   "events",
-  "politics",
   "people",
   "history",
-  "science_tech",
 ];
 
 function deskMeta(id: "all" | DeskId) {
   if (id === "all") {
     return {
       label: "All desks",
-      description: "Everything Missoula — civic, business, sports, safety, events, politics, history, and more.",
+      description: "Everything Missoula — civic, business, sports, safety, events, people, and history.",
       dot: "bg-foreground",
       text: "text-foreground",
       letter: "•",
