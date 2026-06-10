@@ -63,7 +63,9 @@ export function TopBar({
       <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-5 md:px-6 lg:py-3.5">
         {/* Left: logo + location (same row on mobile and desktop) */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-          <Link href={`/${currentCity.slug}`} data-testid="link-home" className="shrink-0">
+          {/* Logo links to the landing page (city picker). Use the CitySwitcher
+              pill or the desk tabs to navigate within a city. */}
+          <Link href="/" data-testid="link-landing" aria-label="ZooTown home — pick a city" className="shrink-0">
             <Wordmark />
           </Link>
           <CitySwitcher />

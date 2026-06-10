@@ -142,7 +142,9 @@ function AdminInner() {
               <ArrowLeft className="h-3.5 w-3.5" />
               Back
             </Link>
-            <Wordmark />
+            <Link href="/" data-testid="link-admin-landing" aria-label="ZooTown home">
+              <Wordmark />
+            </Link>
             <AdminCitySwitcher />
           </div>
           <div className="flex items-center gap-2">

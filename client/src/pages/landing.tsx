@@ -28,7 +28,9 @@ export default function Landing() {
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex w-full max-w-[1100px] items-center justify-between px-4 py-3 md:px-6">
-          <Wordmark />
+          <Link href="/" data-testid="link-landing" aria-label="ZooTown home">
+            <Wordmark />
+          </Link>
           <button
             onClick={toggle}
             aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
