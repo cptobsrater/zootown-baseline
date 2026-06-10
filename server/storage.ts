@@ -26,7 +26,7 @@ import type {
 } from "../shared/schema.js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq, desc, asc, and, gte, or, isNull, sql, inArray } from "drizzle-orm";
+import { eq, desc, asc, and, gte, or, isNull, sql, inArray, ne } from "drizzle-orm";
 import { jobPosts } from "../shared/schema.js";
 
 // ------ Connection ------
@@ -37,7 +37,7 @@ if (!DATABASE_URL) {
 
 // postgres-js connection. Supabase pooler accepts up to 60 connections on free tier;
 // we keep `max` low because serverless runs each instance briefly.
-const queryClient = postgres(DATABASE_URL || "postgres://invalid", {
+export const queryClient = postgres(DATABASE_URL || "postgres://invalid", {
   max: 5,
   prepare: false, // Supabase pooler doesn't support named prepared statements
   idle_timeout: 20,
@@ -54,6 +54,8 @@ export interface StoryQuery {
   limit?: number;
   cursor?: number;
   modState?: "all" | "draft" | "approved" | "rejected";
+  isReviewed?: boolean;          // filter by admin-review state
+  includeEvents?: boolean;       // when false (default), desk='events' rows are excluded from news feed
 }
 
 // ------ Row mappers (snake_case DB rows → camelCase types) ------
@@ -77,9 +79,29 @@ function rowToStory(r: any): Story {
     modState: r.mod_state ?? r.modState,
     politicalScope: r.political_scope ?? r.politicalScope ?? null,
     eventDate: r.event_date ?? r.eventDate ?? null,
+    venue: r.venue ?? null,
+    startsAt: r.starts_at ?? r.startsAt ?? null,
+    endsAt: r.ends_at ?? r.endsAt ?? null,
+    isReviewed: r.is_reviewed === true || r.is_reviewed === 1 || r.isReviewed === true,
+    reviewedAt: r.reviewed_at ?? r.reviewedAt ?? null,
   };
 }
 
+// Convert a stories row (with desk='events') to the public EventItem shape.
+function rowToEventFromStory(r: any): EventItem {
+  return {
+    id: r.id,
+    title: r.headline,
+    venue: r.venue ?? r.sourceName ?? "",
+    startsAt: r.startsAt ?? r.eventDate ?? r.publishedAt,
+    endsAt: r.endsAt ?? null,
+    sourceName: r.sourceName,
+    sourceUrl: r.sourceUrl,
+    tag: "Event",
+    desk: r.desk,
+    description: r.summary ?? null,
+  };
+}
 function rowToEvent(r: any): EventItem {
   return {
     id: r.id,
@@ -253,11 +275,14 @@ export interface IStorage {
   listIngestRuns(limit?: number): Promise<IngestRun[]>;
   getTrendingTags(limit?: number): Promise<Array<{ tag: string; count: number }>>;
   getTopStories(limit?: number): Promise<Story[]>;
-  updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl">>): Promise<Story | undefined>;
+  updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt">>): Promise<Story | undefined>;
+  markStoryReviewed(id: number, reviewed: boolean): Promise<Story | undefined>;
   deleteStory(id: number): Promise<boolean>;
   logEdit(edit: Omit<StoryEdit, "id">): Promise<StoryEdit>;
   listEdits(limit?: number): Promise<StoryEdit[]>;
   recentEditPatterns(days?: number): Promise<Array<{ sourceName: string; field: string; count: number }>>;
+  // Suggest classification rules from repeated desk reassignments.
+  suggestedRules(minCount?: number, days?: number): Promise<Array<{ sourceName: string; fromDesk: string; toDesk: string; count: number; sampleHeadlines: string[] }>>;
   createSource(input: InsertSource): Promise<Source>;
   deleteSource(id: number): Promise<boolean>;
   updateSource(id: number, patch: Partial<InsertSource>): Promise<Source | null>;
@@ -299,7 +324,13 @@ export class DatabaseStorage implements IStorage {
     // Build WHERE using SQL fragments. Use parameterized queries for safety.
     const conditions: any[] = [];
     if (modState !== "all") conditions.push(eq(stories.modState, modState));
-    if (q.desk && q.desk !== "all") conditions.push(eq(stories.desk, q.desk));
+    if (q.desk && q.desk !== "all") {
+      conditions.push(eq(stories.desk, q.desk));
+    } else if (!q.includeEvents) {
+      // Public news feed: hide events (they belong on the calendar).
+      conditions.push(ne(stories.desk, "events"));
+    }
+    if (q.isReviewed !== undefined) conditions.push(eq(stories.isReviewed, q.isReviewed));
     if (needle) {
       conditions.push(sql`(lower(${stories.headline}) LIKE ${needle} OR lower(${stories.summary}) LIKE ${needle} OR lower(${stories.tags}) LIKE ${needle} OR lower(coalesce(${stories.location}, '')) LIKE ${needle})`);
     }
@@ -337,25 +368,75 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ----- Events -----
+  // Events are stored in `stories` with desk='events'. The dedicated `events` table
+  // is kept only as a legacy fallback; new writes go to stories.
   async listEvents(limit = 6): Promise<EventItem[]> {
     const nowIso = new Date().toISOString();
     const rows = await db
       .select()
-      .from(events)
-      .where(or(gte(events.endsAt, nowIso), and(isNull(events.endsAt), gte(events.startsAt, nowIso))))
-      .orderBy(asc(events.startsAt))
+      .from(stories)
+      .where(
+        and(
+          eq(stories.desk, "events"),
+          ne(stories.modState, "rejected"),
+          or(
+            gte(stories.endsAt, nowIso),
+            and(isNull(stories.endsAt), gte(stories.startsAt, nowIso)),
+            and(isNull(stories.endsAt), isNull(stories.startsAt)),
+          ),
+        ),
+      )
+      .orderBy(asc(stories.startsAt))
       .limit(limit);
-    return rows.map(rowToEvent);
+    return rows.map(rowToEventFromStory);
   }
 
   async findEventByUrl(url: string): Promise<EventItem | undefined> {
-    const rows = await db.select().from(events).where(eq(events.sourceUrl, url)).limit(1);
-    return rows[0] ? rowToEvent(rows[0]) : undefined;
+    const rows = await db
+      .select()
+      .from(stories)
+      .where(and(eq(stories.sourceUrl, url), eq(stories.desk, "events")))
+      .limit(1);
+    return rows[0] ? rowToEventFromStory(rows[0]) : undefined;
   }
 
   async createEvent(input: InsertEvent): Promise<EventItem> {
-    const rows = await db.insert(events).values(input).returning();
-    return rowToEvent(rows[0]);
+    // Insert as a story with desk='events'.
+    const now = new Date().toISOString();
+    const storyRow = {
+      headline: input.title,
+      summary: input.description ?? input.title,
+      desk: "events",
+      tags: "[]",
+      sourceName: input.sourceName,
+      sourceUrl: input.sourceUrl,
+      sourceType: "Community Calendar",
+      publishedAt: now,
+      fetchedAt: now,
+      location: null,
+      status: "Event",
+      riskLevel: "low" as const,
+      isSeeded: false,
+      modState: "approved" as const,
+      politicalScope: null,
+      eventDate: input.startsAt,
+      whyItMatters: null,
+      venue: input.venue,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt ?? null,
+      isReviewed: false,
+      reviewedAt: null,
+    };
+    const rows = await db.insert(stories).values(storyRow).returning();
+    return rowToEventFromStory(rows[0]);
+  }
+
+  // ----- Review workflow -----
+  // Mark a story (or event) as admin-reviewed. Used by /api/admin/stories/:id/review.
+  async markStoryReviewed(id: number, reviewed: boolean): Promise<Story | undefined> {
+    const reviewedAt = reviewed ? new Date().toISOString() : null;
+    await db.update(stories).set({ isReviewed: reviewed, reviewedAt }).where(eq(stories.id, id));
+    return this.getStory(id);
   }
 
   // ----- Sources -----
@@ -528,13 +609,17 @@ export class DatabaseStorage implements IStorage {
   // ----- Story edit/delete + log -----
   async updateStoryFields(
     id: number,
-    fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl">>,
+    fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt">>,
   ): Promise<Story | undefined> {
     const set: Record<string, any> = {};
     if (fields.headline !== undefined) set.headline = fields.headline;
     if (fields.summary !== undefined) set.summary = fields.summary;
     if (fields.desk !== undefined) set.desk = fields.desk;
     if (fields.sourceUrl !== undefined) set.sourceUrl = fields.sourceUrl;
+    if (fields.sourceName !== undefined) set.sourceName = fields.sourceName;
+    if (fields.venue !== undefined) set.venue = fields.venue;
+    if (fields.startsAt !== undefined) set.startsAt = fields.startsAt;
+    if (fields.endsAt !== undefined) set.endsAt = fields.endsAt;
     if (Object.keys(set).length === 0) return this.getStory(id);
     await db.update(stories).set(set).where(eq(stories.id, id));
     return this.getStory(id);
@@ -554,6 +639,37 @@ export class DatabaseStorage implements IStorage {
   async listEdits(limit = 100): Promise<StoryEdit[]> {
     const rows = await db.select().from(storyEdits).orderBy(desc(storyEdits.editedAt)).limit(limit);
     return rows.map(rowToStoryEdit);
+  }
+
+  async suggestedRules(minCount = 5, days = 30): Promise<Array<{ sourceName: string; fromDesk: string; toDesk: string; count: number; sampleHeadlines: string[] }>> {
+    const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    // Group desk-change edits by (sourceName, beforeValue, afterValue)
+    const rows = await db.execute(sql`
+      SELECT
+        e.source_name,
+        e.before_value AS from_desk,
+        e.after_value  AS to_desk,
+        COUNT(*)::int  AS c,
+        (ARRAY_AGG(s.headline ORDER BY e.edited_at DESC))[1:3] AS sample_headlines
+      FROM story_edits e
+      LEFT JOIN stories s ON s.id = e.story_id
+      WHERE e.field = 'desk'
+        AND e.edited_at > ${cutoff}
+        AND e.source_name IS NOT NULL
+        AND e.before_value IS NOT NULL
+        AND e.after_value IS NOT NULL
+      GROUP BY e.source_name, e.before_value, e.after_value
+      HAVING COUNT(*) >= ${minCount}
+      ORDER BY c DESC
+      LIMIT 20
+    `);
+    return (rows as any[]).map((r) => ({
+      sourceName: r.source_name,
+      fromDesk: r.from_desk,
+      toDesk: r.to_desk,
+      count: r.c,
+      sampleHeadlines: Array.isArray(r.sample_headlines) ? r.sample_headlines.filter(Boolean) : [],
+    }));
   }
 
   async recentEditPatterns(days = 7): Promise<Array<{ sourceName: string; field: string; count: number }>> {

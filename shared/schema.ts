@@ -45,6 +45,13 @@ export const stories = pgTable("stories", {
   modState: text("mod_state").notNull().default("approved"),
   politicalScope: text("political_scope"),
   eventDate: text("event_date"),
+  // Event-specific fields (populated when desk = 'events')
+  venue: text("venue"),
+  startsAt: text("starts_at"),
+  endsAt: text("ends_at"),
+  // Manual-review workflow: false = auto-published, true = admin-verified
+  isReviewed: boolean("is_reviewed").notNull().default(false),
+  reviewedAt: text("reviewed_at"),
 });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export type InsertStory = z.infer<typeof insertStorySchema>;

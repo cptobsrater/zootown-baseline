@@ -20,6 +20,7 @@ import { EditPatternsPanel } from "@/components/admin/EditPatternsPanel";
 import { AddHistoryForm } from "@/components/admin/AddHistoryForm";
 import { JobModerationPanel } from "@/components/admin/JobModerationPanel";
 import { RulesPanel } from "@/components/admin/RulesPanel";
+import { StoryInbox } from "@/components/admin/StoryInbox";
 import { type DeskId, parseTags, relativeTime } from "@/lib/format";
 import {
   ArrowLeft,
@@ -36,7 +37,7 @@ import {
   Briefcase,
 } from "lucide-react";
 
-type AdminSection = "moderation" | "sources" | "rules" | "log" | "patterns" | "history" | "jobs";
+type AdminSection = "inbox" | "moderation" | "sources" | "rules" | "log" | "patterns" | "history" | "jobs";
 
 const TABS: Array<{ id: ModState; label: string; intent: string }> = [
   { id: "draft", label: "Drafts", intent: "Awaiting review" },
@@ -68,7 +69,7 @@ export default function AdminPage() {
 }
 
 function AdminInner() {
-  const [section, setSection] = useState<AdminSection>("moderation");
+  const [section, setSection] = useState<AdminSection>("inbox");
   const [tab, setTab] = useState<ModState>("draft");
   const [editing, setEditing] = useState<Story | null>(null);
   const [deleting, setDeleting] = useState<Story | null>(null);
@@ -155,26 +156,33 @@ function AdminInner() {
         <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="font-serif text-[1.9rem] font-semibold tracking-tight">
-              {section === "moderation" && "Moderation Queue"}
+              {section === "inbox" && "Story Inbox"}
+              {section === "moderation" && "Moderation Queue (legacy)"}
               {section === "sources" && "Sources & Health"}
               {section === "log" && "Ingest Log"}
               {section === "patterns" && "Override Patterns"}
               {section === "history" && "History Pool"}
               {section === "jobs" && "Job Posts"}
+              {section === "rules" && "Classification Rules"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground max-w-2xl">
+              {section === "inbox" &&
+                "Everything published to the site — newest first. Click a row to edit. Hit Approve to mark a story as reviewed (still live, plus used as a learning signal)."}
               {section === "moderation" &&
-                "Review AI-generated summaries before they reach the public feed. Edit, reassign desk, or delete. Every change is logged."}
+                "Legacy draft/approved/rejected workflow. The new Inbox is what you'll mostly use."}
               {section === "sources" &&
                 "Every watched Missoula source. Add new sources with a live-test preview, run on demand, or remove sources that aren't pulling their weight."}
               {section === "log" &&
                 "Every ingestion run the scheduler has performed — live fetches, fixtures fallbacks, dedupes, and cross-source clusters. Updates every 10 seconds."}
               {section === "patterns" &&
                 "Recent manual overrides — these patterns inform parser fixes (not ML training). When a source consistently misclassifies, the parser gets patched."}
+              {section === "rules" &&
+                "Active classification rules + suggestions surfaced from your repeated edits."}
             </p>
           </div>
           <div className="inline-flex flex-wrap rounded-lg border border-border bg-card p-1 text-xs">
-            <SectionTab active={section === "moderation"} onClick={() => setSection("moderation")} icon={<Inbox className="h-3.5 w-3.5" />} label="Moderation" testId="admin-section-moderation" />
+            <SectionTab active={section === "inbox"} onClick={() => setSection("inbox")} icon={<Inbox className="h-3.5 w-3.5" />} label="Inbox" testId="admin-section-inbox" />
+            <SectionTab active={section === "moderation"} onClick={() => setSection("moderation")} icon={<Inbox className="h-3.5 w-3.5" />} label="Legacy Mod" testId="admin-section-moderation" />
             <SectionTab active={section === "sources"} onClick={() => setSection("sources")} icon={<Radio className="h-3.5 w-3.5" />} label="Sources" testId="admin-section-sources" />
             <SectionTab active={section === "rules"} onClick={() => setSection("rules")} icon={<History className="h-3.5 w-3.5" />} label="Rules" testId="admin-section-rules" />
             <SectionTab active={section === "log"} onClick={() => setSection("log")} icon={<ListOrdered className="h-3.5 w-3.5" />} label="Ingest log" testId="admin-section-log" />
@@ -184,6 +192,7 @@ function AdminInner() {
           </div>
         </div>
 
+        {section === "inbox" && <StoryInbox />}
         {section === "sources" && <SourcesPanel />}
         {section === "log" && <IngestLogPanel />}
         {section === "patterns" && <EditPatternsPanel />}

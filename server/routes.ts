@@ -19,6 +19,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       limit: z.coerce.number().int().min(1).max(50).optional(),
       cursor: z.coerce.number().int().min(0).optional(),
       modState: z.enum(["all", "draft", "approved", "rejected"]).optional(),
+      isReviewed: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
+      includeEvents: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
     });
     const parsed = schema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -69,7 +71,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ----- Admin auth -----
-  app.post("/api/admin/login", (req, res) => {
+  app.post("/api/admin/login", async (req, res) => {
     const schema = z.object({ password: z.string().min(1).max(200) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Bad request" });
@@ -77,14 +79,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Small artificial delay to slow brute force a hair.
       return setTimeout(() => res.status(401).json({ error: "Wrong password" }), 500);
     }
-    const { token, expiresAt } = issueToken();
+    const { token, expiresAt } = await issueToken();
     res.json({ token, expiresAt });
   });
 
-  app.post("/api/admin/logout", (req, res) => {
+  app.post("/api/admin/logout", async (req, res) => {
     const auth = req.header("authorization") || "";
     const m = auth.match(/^Bearer\s+([A-Za-z0-9]+)$/);
-    if (m) revokeToken(m[1]);
+    if (m) await revokeToken(m[1]);
     res.json({ ok: true });
   });
 
@@ -95,9 +97,44 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ----- Admin: edit / delete stories -----
   const editStorySchema = z.object({
     headline: z.string().min(2).max(400).optional(),
-    summary: z.string().min(2).max(2000).optional(),
-    desk: z.string().max(60).optional(),
+    summary: z.string().min(2).max(20000).optional(),
+    desk: z.enum(DESKS).optional(),
     sourceUrl: z.string().url().max(800).optional(),
+    sourceName: z.string().min(1).max(200).optional(),
+    venue: z.string().max(200).nullable().optional(),
+    startsAt: z.string().max(40).nullable().optional(),
+    endsAt: z.string().max(40).nullable().optional(),
+  });
+
+  // ----- Admin: mark story as reviewed (admin sign-off / training signal) -----
+  app.patch("/api/admin/stories/:id/review", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const schema = z.object({ isReviewed: z.boolean() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const before = await storage.getStory(id);
+    if (!before) return res.status(404).json({ error: "Not found" });
+    const updated = await storage.markStoryReviewed(id, parsed.data.isReviewed);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    if (before.isReviewed !== parsed.data.isReviewed) {
+      await storage.logEdit({
+        storyId: id,
+        field: "isReviewed",
+        beforeValue: String(before.isReviewed),
+        afterValue: String(parsed.data.isReviewed),
+        sourceName: before.sourceName,
+        editedAt: new Date().toISOString(),
+      });
+      // Approving = positive signal: bump source trust.
+      if (parsed.data.isReviewed) {
+        try {
+          const src = (await storage.listSources()).find((s) => s.name === before.sourceName);
+          if (src) await storage.bumpSourceTrust(src.id, 3);
+        } catch {}
+      }
+    }
+    res.json(updated);
   });
 
   app.patch("/api/admin/stories/:id", requireAdmin, async (req, res) => {
@@ -110,7 +147,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const updated = await storage.updateStoryFields(id, parsed.data);
     if (!updated) return res.status(404).json({ error: "Not found" });
     const editedAt = new Date().toISOString();
-    for (const key of ["headline", "summary", "desk", "sourceUrl"] as const) {
+    for (const key of ["headline", "summary", "desk", "sourceUrl", "sourceName", "venue", "startsAt", "endsAt"] as const) {
       const beforeVal = (before as any)[key] ?? null;
       const afterVal = (parsed.data as any)[key];
       if (afterVal !== undefined && afterVal !== beforeVal) {
@@ -202,6 +239,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       edits: await storage.listEdits(limit),
       patterns: await storage.recentEditPatterns(7),
     });
+  });
+
+  // Suggested classification rules from repeated manual desk reassignments.
+  // Shown on /admin Rules tab as 'Suggested rule: route X stories from Y → Z'.
+  app.get("/api/admin/suggested-rules", requireAdmin, async (req, res) => {
+    const minCount = Math.min(Number(req.query.minCount ?? 5), 50);
+    const days = Math.min(Number(req.query.days ?? 30), 365);
+    res.json({ suggestions: await storage.suggestedRules(minCount, days) });
   });
 
   // ----- Admin: add / delete sources + test before saving -----

@@ -9,11 +9,29 @@ interface Props {
   onClose: () => void;
 }
 
+// Convert ISO datetime to <input type="datetime-local"> format (YYYY-MM-DDTHH:mm).
+function isoToLocal(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function localToIso(local: string): string | null {
+  if (!local) return null;
+  const d = new Date(local);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 export function EditStoryModal({ story, onClose }: Props) {
   const [headline, setHeadline] = useState(story.headline);
   const [summary, setSummary] = useState(story.summary);
   const [desk, setDesk] = useState(story.desk);
   const [sourceUrl, setSourceUrl] = useState(story.sourceUrl);
+  const [sourceName, setSourceName] = useState(story.sourceName);
+  const [venue, setVenue] = useState(story.venue ?? "");
+  const [startsAt, setStartsAt] = useState(isoToLocal(story.startsAt));
+  const [endsAt, setEndsAt] = useState(isoToLocal(story.endsAt));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,15 +43,23 @@ export function EditStoryModal({ story, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const isEvent = desk === "events";
+
   async function save() {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const patch: Record<string, string> = {};
+    const patch: Record<string, string | null> = {};
     if (headline !== story.headline) patch.headline = headline;
     if (summary !== story.summary) patch.summary = summary;
     if (desk !== story.desk) patch.desk = desk;
     if (sourceUrl !== story.sourceUrl) patch.sourceUrl = sourceUrl;
+    if (sourceName !== story.sourceName) patch.sourceName = sourceName;
+    if ((venue || null) !== (story.venue || null)) patch.venue = venue || null;
+    const newStartsAt = localToIso(startsAt);
+    if (newStartsAt !== (story.startsAt || null)) patch.startsAt = newStartsAt;
+    const newEndsAt = localToIso(endsAt);
+    if (newEndsAt !== (story.endsAt || null)) patch.endsAt = newEndsAt;
 
     if (Object.keys(patch).length === 0) {
       setBusy(false);
@@ -45,6 +71,7 @@ export function EditStoryModal({ story, onClose }: Props) {
       await apiRequest("PATCH", `/api/admin/stories/${story.id}`, patch);
       queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
       queryClient.invalidateQueries({ queryKey: ["/api/top-stories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/events"] });
       queryClient.invalidateQueries({ queryKey: ["/api/pulse"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/edits"] });
       onClose();
@@ -56,13 +83,13 @@ export function EditStoryModal({ story, onClose }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 overflow-y-auto"
       onClick={onClose}
       data-testid="modal-edit-story"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl rounded-lg border border-card-border bg-card shadow-xl"
+        className="w-full max-w-2xl rounded-lg border border-card-border bg-card shadow-xl my-8"
       >
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <div>
@@ -85,7 +112,7 @@ export function EditStoryModal({ story, onClose }: Props) {
         <div className="p-5 space-y-4">
           <div>
             <label className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-              Headline
+              Headline / Title
             </label>
             <input
               value={headline}
@@ -97,7 +124,7 @@ export function EditStoryModal({ story, onClose }: Props) {
 
           <div>
             <label className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-              Summary
+              {isEvent ? "Description" : "Summary"}
             </label>
             <textarea
               value={summary}
@@ -111,7 +138,7 @@ export function EditStoryModal({ story, onClose }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                Desk
+                Category (desk)
               </label>
               <select
                 value={desk}
@@ -125,19 +152,76 @@ export function EditStoryModal({ story, onClose }: Props) {
                   </option>
                 ))}
               </select>
+              {isEvent && (
+                <p className="mt-1 text-[0.7rem] text-muted-foreground">
+                  Routes to the community calendar instead of the news feed.
+                </p>
+              )}
             </div>
             <div>
               <label className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                Source URL
+                Source name
               </label>
               <input
-                value={sourceUrl}
-                onChange={(e) => setSourceUrl(e.target.value)}
-                data-testid="input-edit-source-url"
+                value={sourceName}
+                onChange={(e) => setSourceName(e.target.value)}
+                data-testid="input-edit-source-name"
                 className="mt-1.5 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
               />
             </div>
           </div>
+
+          <div>
+            <label className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
+              Source URL
+            </label>
+            <input
+              value={sourceUrl}
+              onChange={(e) => setSourceUrl(e.target.value)}
+              data-testid="input-edit-source-url"
+              className="mt-1.5 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
+            />
+          </div>
+
+          {isEvent && (
+            <div className="rounded-md border border-border bg-background/40 p-4 space-y-3">
+              <div className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
+                Event details
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Venue</label>
+                <input
+                  value={venue}
+                  onChange={(e) => setVenue(e.target.value)}
+                  placeholder="e.g. Wilma Theater"
+                  data-testid="input-edit-venue"
+                  className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground">Starts at</label>
+                  <input
+                    type="datetime-local"
+                    value={startsAt}
+                    onChange={(e) => setStartsAt(e.target.value)}
+                    data-testid="input-edit-starts-at"
+                    className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground">Ends at (optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={endsAt}
+                    onChange={(e) => setEndsAt(e.target.value)}
+                    data-testid="input-edit-ends-at"
+                    className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div
@@ -152,7 +236,7 @@ export function EditStoryModal({ story, onClose }: Props) {
 
         <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
           <p className="text-[0.7rem] text-muted-foreground">
-            Every changed field is logged so we can spot patterns in parser misclassification.
+            Every changed field is logged — repeated patterns become suggested rules.
           </p>
           <div className="flex items-center gap-2">
             <button

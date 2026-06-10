@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Trash2, Plus, Pencil, Save, X } from "lucide-react";
+import { Trash2, Plus, Pencil, Save, X, Lightbulb, Check } from "lucide-react";
 
 interface Rule {
   id: number;
@@ -142,6 +142,7 @@ export function RulesPanel() {
 
   return (
     <div className="space-y-6">
+      <SuggestedRulesPanel />
       <div className="rounded-lg border border-card-border bg-card p-4">
         <div className="flex items-center justify-between">
           <div>
@@ -165,7 +166,7 @@ export function RulesPanel() {
           </thead>
           <tbody>
             {rules.length === 0 && <tr><td colSpan={6} className="px-3 py-6 text-center text-xs text-muted-foreground">No rules yet.</td></tr>}
-            {rules.map((r) => editingId === r.id ? (
+            {rules.map((r: Rule) => editingId === r.id ? (
               <tr key={r.id}><td colSpan={6} className="px-3 py-3">{ruleForm}</td></tr>
             ) : (
               <tr key={r.id} className="border-t border-card-border">
@@ -194,6 +195,97 @@ export function RulesPanel() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ---------- Suggested rules from repeated manual edits ----------
+interface Suggestion {
+  sourceName: string;
+  fromDesk: string;
+  toDesk: string;
+  count: number;
+  sampleHeadlines: string[];
+}
+
+function SuggestedRulesPanel() {
+  const qc = useQueryClient();
+  const q = useQuery<{ suggestions: Suggestion[] }>({
+    queryKey: ["/api/admin/suggested-rules"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/suggested-rules");
+      return res.json();
+    },
+  });
+  const accept = useMutation({
+    mutationFn: async (s: Suggestion) => {
+      // Create a rule: when source matches s.sourceName, route to s.toDesk
+      const body = {
+        matchField: "source",
+        pattern: s.sourceName,
+        action: "set_desk",
+        value: s.toDesk,
+        priority: 100,
+        notes: `Auto-suggested from ${s.count} manual edits (${s.fromDesk} → ${s.toDesk}).`,
+        active: true,
+      };
+      const res = await apiRequest("POST", "/api/admin/rules", body);
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/rules"] });
+      qc.invalidateQueries({ queryKey: ["/api/admin/suggested-rules"] });
+    },
+  });
+
+  const items = q.data?.suggestions ?? [];
+  if (q.isLoading) return null;
+  if (items.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-primary/30 bg-primary/5 p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Lightbulb className="h-4 w-4 text-primary" />
+        <h2 className="font-serif text-base font-semibold text-foreground">
+          Suggested rules from your edits
+        </h2>
+      </div>
+      <p className="text-xs text-muted-foreground mb-3">
+        You've manually moved these stories enough times that we can codify the pattern. Accept to create the rule.
+      </p>
+      <ul className="space-y-2">
+        {items.map((s, i) => (
+          <li
+            key={`${s.sourceName}-${s.fromDesk}-${s.toDesk}-${i}`}
+            className="rounded-md border border-border bg-background p-3 flex items-start gap-3"
+          >
+            <div className="flex-1 min-w-0">
+              <div className="text-sm">
+                Route <strong>{s.sourceName}</strong> stories from{" "}
+                <span className="font-mono text-xs">{s.fromDesk}</span> →{" "}
+                <span className="font-mono text-xs">{s.toDesk}</span>{" "}
+                <span className="text-muted-foreground">({s.count} edits)</span>
+              </div>
+              {s.sampleHeadlines.length > 0 && (
+                <ul className="mt-1 text-[0.7rem] text-muted-foreground list-disc list-inside">
+                  {s.sampleHeadlines.slice(0, 2).map((h, j) => (
+                    <li key={j} className="truncate">{h}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <button
+              onClick={() => accept.mutate(s)}
+              disabled={accept.isPending}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground hover-elevate active-elevate-2 disabled:opacity-60"
+              data-testid={`accept-suggestion-${i}`}
+            >
+              <Check className="h-3 w-3" /> Accept
+            </button>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

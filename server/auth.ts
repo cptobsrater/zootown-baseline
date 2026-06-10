@@ -1,13 +1,14 @@
 import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
+import { queryClient } from "./storage.js";
 
 // Single-user admin auth.
 // We compare a SHA-256 hash of the submitted password against ADMIN_PASSWORD_HASH
 // (set as env var in production). If no env var is set, fall back to a hard-coded
 // hash so the dev/preview build still works for the single owner.
 //
-// Tokens are stored in memory and expire 30 minutes after issue. They are NEVER
-// persisted to disk, so a server restart logs everyone out.
+// Tokens are persisted in Supabase so multiple Vercel serverless instances all
+// see the same session. They expire 30 minutes after issue.
 
 const FALLBACK_HASH = "d4e8f76db3e3a1aef37d4d719894c26bdb5bf0b94a43c344e6fe6c350be7a86d"; // sha256("MissoulaRocks")
 
@@ -27,18 +28,11 @@ function constantTimeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(ab, bb);
 }
 
-interface TokenRecord {
-  expiresAt: number;
-}
-
-const tokens = new Map<string, TokenRecord>();
 const TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
-function purge() {
-  const now = Date.now();
-  for (const [t, rec] of tokens) {
-    if (rec.expiresAt <= now) tokens.delete(t);
-  }
+// Reuse the storage layer's connection pool to avoid hitting Supabase's connection limit.
+function getSql() {
+  return queryClient;
 }
 
 export function verifyPassword(password: string): boolean {
@@ -46,36 +40,65 @@ export function verifyPassword(password: string): boolean {
   return constantTimeEqual(sha256(password), expectedHash());
 }
 
-export function issueToken(): { token: string; expiresAt: number } {
-  purge();
+export async function issueToken(): Promise<{ token: string; expiresAt: number }> {
+  const sql = getSql();
   const token = crypto.randomBytes(32).toString("hex");
   const expiresAt = Date.now() + TOKEN_TTL_MS;
-  tokens.set(token, { expiresAt });
+  await sql`INSERT INTO admin_tokens (token, expires_at) VALUES (${token}, ${expiresAt})`;
+  // Best-effort cleanup of expired tokens.
+  try {
+    await sql`DELETE FROM admin_tokens WHERE expires_at <= ${Date.now()}`;
+  } catch {}
   return { token, expiresAt };
 }
 
-export function revokeToken(token: string): void {
-  tokens.delete(token);
+export async function revokeToken(token: string): Promise<void> {
+  try {
+    const sql = getSql();
+    await sql`DELETE FROM admin_tokens WHERE token = ${token}`;
+  } catch {}
 }
 
-export function isTokenValid(token: string | undefined | null): boolean {
-  if (!token) return false;
-  purge();
-  const rec = tokens.get(token);
-  if (!rec) return false;
-  if (rec.expiresAt <= Date.now()) {
-    tokens.delete(token);
+export async function isTokenValid(token: string | undefined | null): Promise<boolean> {
+  if (!token) {
+    console.warn("[auth] no token provided");
     return false;
   }
-  return true;
+  try {
+    const sql = getSql();
+    const rows = await sql`SELECT expires_at FROM admin_tokens WHERE token = ${token} LIMIT 1`;
+    if (rows.length === 0) {
+      console.warn(`[auth] token not found in DB: ${token.slice(0, 8)}...`);
+      return false;
+    }
+    const raw = rows[0].expires_at;
+    const expiresAt = typeof raw === "bigint" ? Number(raw) : Number(raw);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      console.warn(`[auth] token expired: exp=${expiresAt}, now=${Date.now()}`);
+      try { await sql`DELETE FROM admin_tokens WHERE token = ${token}`; } catch {}
+      return false;
+    }
+    return true;
+  } catch (err: any) {
+    console.error("[auth] token lookup error:", err?.message, err?.code, err?.stack?.split("\n")[0]);
+    return false;
+  }
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const auth = req.header("authorization") || "";
   const match = auth.match(/^Bearer\s+([A-Za-z0-9]+)$/);
   const token = match?.[1];
-  if (!isTokenValid(token)) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
+  isTokenValid(token)
+    .then((ok) => {
+      if (!ok) {
+        const debug = process.env.AUTH_DEBUG === "1" ? { tokenPrefix: token?.slice(0, 8), hadAuth: !!auth, matched: !!match } : undefined;
+        return res.status(401).json({ error: "Unauthorized", debug });
+      }
+      next();
+    })
+    .catch((err) => {
+      console.error("[auth] requireAdmin error:", err);
+      res.status(500).json({ error: "Auth check failed", message: err?.message });
+    });
 }
