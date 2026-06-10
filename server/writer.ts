@@ -26,19 +26,16 @@ export interface DraftArticle {
   sourceUrl?: string;    // Wikipedia or archive link (cited as Reference)
 }
 
-function existingHeadlines(desk: "people" | "history"): Set<string> {
-  return new Set(
-    storage
-      .listAllHistoryStoriesForDesk(desk)
-      .map((s) => s.headline.toLowerCase().trim()),
-  );
+async function existingHeadlines(desk: "people" | "history"): Promise<Set<string>> {
+  const rows = await storage.listAllHistoryStoriesForDesk(desk);
+  return new Set(rows.map((s) => s.headline.toLowerCase().trim()));
 }
 
 export async function generateNextArticle(
   desk: "people" | "history",
 ): Promise<DraftArticle | null> {
   const bank = desk === "people" ? PEOPLE_BANK : HISTORY_BANK;
-  const used = existingHeadlines(desk);
+  const used = await existingHeadlines(desk);
   const next = bank.find((a) => !used.has(a.headline.toLowerCase().trim()));
   if (!next) return null;
   return next;

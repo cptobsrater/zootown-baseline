@@ -114,7 +114,7 @@ process.on("unhandledRejection", (reason) => {
       host: "0.0.0.0",
       reusePort: true,
     },
-    () => {
+    async () => {
       log(`serving on port ${port}`);
       // Kick off the ingestion scheduler once the server is listening.
       // Per-source cadence lives in the `sources.cadence_minutes` column.
@@ -125,7 +125,7 @@ process.on("unhandledRejection", (reason) => {
         console.error("[boot] scheduler failed (non-fatal):", err);
       }
       try {
-        seedHistoryIfEmpty();
+        await seedHistoryIfEmpty();
         startLongFormScheduler();
         log("history pool initialized", "history");
       } catch (err) {

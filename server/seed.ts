@@ -1482,7 +1482,7 @@ function src(
   url: string,
   opts: {
     feedUrl?: string | null;
-    feedType?: "rss" | "atom" | "html" | "none";
+    feedType?: "rss" | "atom" | "html" | "headless" | "none";
     parserKey?: string | null;
     sourceType: "Official" | "Local News" | "Community Calendar" | "Social Media";
     desks: string[];

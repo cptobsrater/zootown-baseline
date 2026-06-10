@@ -1,3 +1,10 @@
+/**
+ * Postgres-backed storage for ZooTown (Supabase).
+ *
+ * All methods are async. The schema lives in shared/schema.ts.
+ * Tables are created via Supabase migrations (managed separately) — this
+ * module does NOT create tables; it only reads/writes.
+ */
 import { stories, events, sources, ingestRuns, storySources, storyEdits, historyStories, classificationRules, meta } from "@shared/schema";
 import type {
   Story,
@@ -17,1065 +24,189 @@ import type {
   JobPostState,
   ClassificationRule,
 } from "@shared/schema";
-import { drizzle } from "drizzle-orm/better-sqlite3";
-import Database from "better-sqlite3";
-import { eq, desc, asc, and, gte, or, isNull, sql } from "drizzle-orm";
-import { SEED_STORIES, SEED_EVENTS, SEED_SOURCES } from "./seed";
-import path from "node:path";
-import fs from "node:fs";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import { eq, desc, asc, and, gte, or, isNull, sql, inArray } from "drizzle-orm";
+import { jobPosts } from "@shared/schema";
 
-const DB_PATH = path.resolve(process.cwd(), "data.db");
-console.log(`[storage] opening sqlite at ${DB_PATH} (exists=${fs.existsSync(DB_PATH)})`);
-const sqlite = new Database(DB_PATH);
-sqlite.pragma("journal_mode = WAL");
-console.log(`[storage] sqlite opened OK`);
-
-sqlite.exec(`
-CREATE TABLE IF NOT EXISTS stories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  headline TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  why_it_matters TEXT,
-  desk TEXT NOT NULL,
-  tags TEXT NOT NULL,
-  source_name TEXT NOT NULL,
-  source_url TEXT NOT NULL,
-  source_type TEXT NOT NULL,
-  published_at TEXT NOT NULL,
-  fetched_at TEXT NOT NULL,
-  location TEXT,
-  status TEXT,
-  risk_level TEXT NOT NULL DEFAULT 'low',
-  is_seeded INTEGER NOT NULL DEFAULT 1,
-  mod_state TEXT NOT NULL DEFAULT 'approved'
-);
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL,
-  venue TEXT NOT NULL,
-  starts_at TEXT NOT NULL,
-  source_name TEXT NOT NULL,
-  source_url TEXT NOT NULL,
-  tag TEXT
-);
-CREATE TABLE IF NOT EXISTS sources (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  url TEXT NOT NULL,
-  feed_url TEXT,
-  feed_type TEXT NOT NULL DEFAULT 'none',
-  parser_key TEXT,
-  source_type TEXT NOT NULL,
-  category TEXT NOT NULL DEFAULT 'official',
-  handle TEXT,
-  platform TEXT,
-  desks TEXT NOT NULL,
-  cadence_minutes INTEGER NOT NULL DEFAULT 5,
-  last_checked_at TEXT,
-  last_status TEXT NOT NULL DEFAULT 'idle',
-  last_mode TEXT,
-  last_error TEXT,
-  last_items INTEGER NOT NULL DEFAULT 0,
-  active INTEGER NOT NULL DEFAULT 1,
-  trust_score INTEGER NOT NULL DEFAULT 50
-);
-CREATE TABLE IF NOT EXISTS classification_rules (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  match_field TEXT NOT NULL,
-  pattern TEXT NOT NULL,
-  action TEXT NOT NULL,
-  value TEXT NOT NULL,
-  priority INTEGER NOT NULL DEFAULT 0,
-  notes TEXT,
-  created_at TEXT NOT NULL,
-  created_by TEXT NOT NULL DEFAULT 'admin',
-  hit_count INTEGER NOT NULL DEFAULT 0,
-  active INTEGER NOT NULL DEFAULT 1
-);
-CREATE TABLE IF NOT EXISTS ingest_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_id INTEGER NOT NULL,
-  source_name TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  finished_at TEXT NOT NULL,
-  mode TEXT NOT NULL,
-  fetched INTEGER NOT NULL DEFAULT 0,
-  added INTEGER NOT NULL DEFAULT 0,
-  duplicates INTEGER NOT NULL DEFAULT 0,
-  clustered INTEGER NOT NULL DEFAULT 0,
-  errors INTEGER NOT NULL DEFAULT 0,
-  message TEXT
-);
-CREATE TABLE IF NOT EXISTS story_sources (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  story_id INTEGER NOT NULL,
-  source_name TEXT NOT NULL,
-  source_url TEXT NOT NULL,
-  source_type TEXT NOT NULL,
-  added_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS story_edits (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  story_id INTEGER NOT NULL,
-  field TEXT NOT NULL,
-  before_value TEXT,
-  after_value TEXT,
-  source_name TEXT,
-  edited_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS history_stories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  headline TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  source_url TEXT,
-  desk TEXT NOT NULL DEFAULT 'history',
-  kind TEXT NOT NULL DEFAULT 'history',
-  published_at TEXT NOT NULL,
-  last_bumped_at TEXT NOT NULL,
-  is_visible INTEGER NOT NULL DEFAULT 1,
-  last_shown_at TEXT
-);
-CREATE TABLE IF NOT EXISTS job_posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL,
-  business TEXT NOT NULL,
-  address TEXT,
-  phone TEXT,
-  pay TEXT,
-  body TEXT NOT NULL,
-  submitter_email TEXT,
-  state TEXT NOT NULL DEFAULT 'pending',
-  submitted_at TEXT NOT NULL,
-  approved_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_job_posts_state ON job_posts(state);
-CREATE INDEX IF NOT EXISTS idx_job_posts_submitted_at ON job_posts(submitted_at);
-CREATE TABLE IF NOT EXISTS meta (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_stories_source_url ON stories(source_url);
-CREATE INDEX IF NOT EXISTS idx_stories_published_at ON stories(published_at);
-CREATE INDEX IF NOT EXISTS idx_story_sources_story_id ON story_sources(story_id);
-CREATE INDEX IF NOT EXISTS idx_ingest_runs_started ON ingest_runs(started_at);
-CREATE INDEX IF NOT EXISTS idx_story_edits_story_id ON story_edits(story_id);
-CREATE INDEX IF NOT EXISTS idx_story_edits_edited_at ON story_edits(edited_at);
-`);
-
-function ensureColumn(table: string, column: string, ddl: string) {
-  const cols = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === column)) {
-    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-    console.log(`[storage] migration: added ${table}.${column}`);
-  }
+// ------ Connection ------
+const DATABASE_URL = process.env.DATABASE_URL ?? process.env.SUPABASE_DB_URL ?? "";
+if (!DATABASE_URL) {
+  console.warn("[storage] DATABASE_URL not set — storage calls will fail until it is configured");
 }
 
-// Stories migrations
-ensureColumn("stories", "political_scope", "political_scope TEXT");
-ensureColumn("stories", "event_date", "event_date TEXT");
+// postgres-js connection. Supabase pooler accepts up to 60 connections on free tier;
+// we keep `max` low because serverless runs each instance briefly.
+const queryClient = postgres(DATABASE_URL || "postgres://invalid", {
+  max: 5,
+  prepare: false, // Supabase pooler doesn't support named prepared statements
+  idle_timeout: 20,
+  connect_timeout: 10,
+});
 
-// Events migrations
-ensureColumn("events", "ends_at", "ends_at TEXT");
-ensureColumn("events", "desk", "desk TEXT");
-ensureColumn("events", "description", "description TEXT");
+export const db = drizzle(queryClient);
 
-// Sources migrations
-ensureColumn("sources", "feed_url", "feed_url TEXT");
-ensureColumn("sources", "feed_type", "feed_type TEXT NOT NULL DEFAULT 'none'");
-ensureColumn("sources", "parser_key", "parser_key TEXT");
-ensureColumn("sources", "last_status", "last_status TEXT NOT NULL DEFAULT 'idle'");
-ensureColumn("sources", "last_mode", "last_mode TEXT");
-ensureColumn("sources", "last_error", "last_error TEXT");
-ensureColumn("sources", "last_items", "last_items INTEGER NOT NULL DEFAULT 0");
-ensureColumn("sources", "category", "category TEXT NOT NULL DEFAULT 'official'");
-ensureColumn("sources", "handle", "handle TEXT");
-ensureColumn("sources", "platform", "platform TEXT");
-ensureColumn("sources", "category_priority", "category_priority TEXT");
-
-export const db = drizzle(sqlite);
-
-// ------ Seeding (runs if empty) ------
-function seedIfEmpty() {
-  const row = sqlite.prepare("SELECT COUNT(*) as c FROM stories").get() as { c: number };
-  if (row.c === 0) {
-    const now = Date.now();
-    const insertStmts = db;
-
-    for (const s of SEED_STORIES) {
-      const publishedAt = new Date(now - s.minutesAgo * 60 * 1000).toISOString();
-      const fetchedAt = new Date(now - Math.max(0, s.minutesAgo - 2) * 60 * 1000).toISOString();
-      insertStmts
-        .insert(stories)
-        .values({
-          headline: s.headline,
-          summary: s.summary,
-          whyItMatters: s.whyItMatters ?? null,
-          desk: s.desk,
-          tags: JSON.stringify(s.tags),
-          sourceName: s.sourceName,
-          sourceUrl: s.sourceUrl,
-          sourceType: s.sourceType,
-          publishedAt,
-          fetchedAt,
-          location: s.location ?? null,
-          status: s.status ?? null,
-          riskLevel: s.riskLevel,
-          isSeeded: s.isSeeded,
-          modState: s.modState,
-          politicalScope: null,
-          eventDate: null,
-        })
-        .run();
-    }
-
-    for (const e of SEED_EVENTS) {
-      const startsAt = new Date(now + e.hoursFromNow * 3600 * 1000).toISOString();
-      insertStmts
-        .insert(events)
-        .values({
-          title: e.title,
-          venue: e.venue,
-          startsAt,
-          endsAt: null,
-          sourceName: e.sourceName,
-          sourceUrl: e.sourceUrl,
-          tag: e.tag ?? null,
-          desk: e.desk ?? null,
-          description: e.description ?? null,
-        })
-        .run();
-    }
-
-    for (const src of SEED_SOURCES) {
-      insertStmts.insert(sources).values(src).run();
-    }
-  }
-}
-
-seedIfEmpty();
-
-// ------ Retired-desk migration ------
-// Politics and Science/Tech are no longer desk categories. Remap any existing
-// rows so they stop appearing in the navigation. Idempotent.
-function migrateRetiredDesks() {
-  try {
-    const s = sqlite
-      .prepare(
-        "UPDATE stories SET desk = CASE desk WHEN 'politics' THEN 'city' WHEN 'science_tech' THEN 'business' END, political_scope = NULL WHERE desk IN ('politics', 'science_tech')",
-      )
-      .run();
-    const e = sqlite
-      .prepare(
-        "UPDATE events SET desk = CASE desk WHEN 'politics' THEN 'city' WHEN 'science_tech' THEN 'business' END WHERE desk IN ('politics', 'science_tech')",
-      )
-      .run();
-    if ((s.changes ?? 0) + (e.changes ?? 0) > 0) {
-      console.log(`[storage] retired-desk migration remapped ${s.changes} stories, ${e.changes} events`);
-    }
-  } catch (err) {
-    console.warn("[storage] retired-desk migration skipped:", err);
-  }
-}
-migrateRetiredDesks();
-
-// ------ history_stories column adds (idempotent) ------
-function ensureHistoryColumns() {
-  const cols = sqlite.prepare(`PRAGMA table_info(history_stories)`).all() as Array<{ name: string }>;
-  const names = new Set(cols.map((c) => c.name));
-  if (!names.has("desk")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN desk TEXT NOT NULL DEFAULT 'history'`);
-  if (!names.has("kind")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN kind TEXT NOT NULL DEFAULT 'history'`);
-  if (!names.has("is_visible")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN is_visible INTEGER NOT NULL DEFAULT 1`);
-  if (!names.has("last_shown_at")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN last_shown_at TEXT`);
-}
-ensureHistoryColumns();
-
-// ------ sources.trust_score (idempotent) ------
-function ensureSourceTrustColumn() {
-  const cols = sqlite.prepare(`PRAGMA table_info(sources)`).all() as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === "trust_score")) {
-    sqlite.exec(`ALTER TABLE sources ADD COLUMN trust_score INTEGER NOT NULL DEFAULT 50`);
-  }
-}
-ensureSourceTrustColumn();
-
-// ------ Seed default classification rules (only if table empty) ------
-function seedClassificationRulesIfEmpty() {
-  const count = (sqlite.prepare("SELECT COUNT(*) AS c FROM classification_rules").get() as { c: number }).c;
-  if (count > 0) return;
-  const now = new Date().toISOString();
-  const defaults = [
-    { mf: "text", pat: "obituary", act: "set_desk", val: "people", pri: 100, n: "Obituaries always route to People desk" },
-    { mf: "text", pat: "obituaries", act: "set_desk", val: "people", pri: 100, n: "Obituaries always route to People desk" },
-    { mf: "text", pat: "in memoriam", act: "set_desk", val: "people", pri: 100, n: "Memorials route to People desk" },
-    { mf: "text", pat: "passed away", act: "set_desk", val: "people", pri: 90, n: "Death notices route to People desk" },
-    { mf: "text", pat: "funeral service", act: "set_desk", val: "people", pri: 90, n: "Funeral notices route to People desk" },
-  ];
-  const stmt = sqlite.prepare(
-    `INSERT INTO classification_rules (match_field, pattern, action, value, priority, notes, created_at, created_by, hit_count, active) VALUES (?, ?, ?, ?, ?, ?, ?, 'system', 0, 1)`,
-  );
-  for (const r of defaults) stmt.run(r.mf, r.pat, r.act, r.val, r.pri, r.n, now);
-  console.log(`[storage] seeded ${defaults.length} default classification rules`);
-}
-seedClassificationRulesIfEmpty();
-
-// ------ One-shot v2 backfill ------
-// Re-classify stories using the new predictor (culture/community → events/people/city/etc).
-// Idempotent: only runs if meta.backfilled_v2 is missing.
-function backfillV2IfNeeded() {
-  try {
-    sqlite.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
-    const existing = sqlite.prepare("SELECT value FROM meta WHERE key = 'backfilled_v2'").get() as { value: string } | undefined;
-    if (existing) {
-      console.log(`[backfill-v2] already done at ${existing.value}, skipping`);
-      return;
-    }
-    console.log("[backfill-v2] starting…");
-
-    const remap = (desk: string, headline: string, summary: string): string => {
-      const text = (headline + " " + summary).toLowerCase();
-      if (desk === "culture") {
-        if (/festival|concert|live music|open mic|art opening|gallery|performance|tickets|doors open|free event|rsvp|this weekend|tonight/.test(text)) return "events";
-        if (/profile|interview|q&a|born and raised|artist|musician|author|poet|filmmaker/.test(text)) return "people";
-        if (/business|restaurant|cafe|brewery|shop|store|opens|opening/.test(text)) return "business";
-        return "events";
-      }
-      if (desk === "community") {
-        if (/volunteer|hero|neighbor|good samaritan|profile|interview|story of|meet/.test(text)) return "people";
-        return "city";
-      }
-      return desk;
-    };
-    const VALID = new Set(["city", "business", "crime", "sports", "health", "events", "politics", "people", "history", "science_tech"]);
-
-    const rows = sqlite.prepare("SELECT id, desk, headline, summary FROM stories").all() as Array<{ id: number; desk: string; headline: string; summary: string }>;
-    let changed = 0;
-    const upd = sqlite.prepare("UPDATE stories SET desk = ? WHERE id = ?");
-    const tx = sqlite.transaction(() => {
-      for (const r of rows) {
-        let next = r.desk;
-        if (!VALID.has(r.desk)) next = remap(r.desk, r.headline || "", r.summary || "");
-        if (next !== r.desk) {
-          upd.run(next, r.id);
-          changed++;
-        }
-      }
-    });
-    tx();
-    sqlite.prepare("INSERT INTO meta (key, value) VALUES ('backfilled_v2', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(new Date().toISOString());
-    console.log(`[backfill-v2] done — reclassified ${changed} of ${rows.length} stories`);
-  } catch (err) {
-    console.error("[backfill-v2] failed (non-fatal):", err);
-  }
-}
-backfillV2IfNeeded();
-
-// ------ Geo-strict purge (one-shot, idempotent via meta key) ------
-function purgeNonLocalIfNeeded() {
-  try {
-    sqlite.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
-    const META_KEY = "geo_strict_purge_v1";
-    const existing = sqlite.prepare("SELECT value FROM meta WHERE key = ?").get(META_KEY) as { value: string } | undefined;
-    if (existing) return;
-    const signals = [
-      "missoula", "montana", "mt.", ", mt", "griz", "grizzlies", "university of montana", "umt",
-      "bozeman", "helena", "butte", "kalispell", "billings", "great falls", "hamilton", "stevensville",
-      "lolo", "florence", "superior", "frenchtown", "bonner", "clinton",
-      "clark fork", "bitterroot", "rattlesnake", "blackfoot",
-      "daines", "tester", "gianforte", "zinke", "bullock", "rosendale",
-      "missoulian", "kpax", "mtpr", "montana free press", "missoula current",
-      "hellgate", "sentinel high", "big sky high", "loyola sacred heart",
-      "flathead", "glacier county", "yellowstone county", "gallatin county", "ravalli county",
-      "big sky", "whitefish", "polson", "havre", "miles city", "glendive", "sidney", "livingston",
-    ];
-    const wire = [
-      "(ap)", "— ap", "associated press", "reuters", "(afp)", "agence france", "bloomberg news",
-      "washington (", "washington —", "new york (", "new york —", "los angeles (",
-      "london (", "london —", "beijing (", "moscow (", "paris (", "berlin (",
-      "-- ap", "by the associated press",
-    ];
-    const rows = sqlite.prepare("SELECT id, desk, headline, summary, source_url FROM stories").all() as Array<{ id: number; desk: string; headline: string; summary: string; source_url: string }>;
-    let demoted = 0;
-    let demotedCrime = 0;
-    for (const r of rows) {
-      const text = `${r.headline ?? ""} ${r.summary ?? ""}`.toLowerCase();
-      const hasSignal = signals.some((s) => text.includes(s));
-      const hasWire = wire.some((m) => text.includes(m));
-      let fromMTSource = false;
-      try {
-        const host = new URL(r.source_url).hostname.toLowerCase();
-        fromMTSource = /missoula|missoulian|kpax|mtpr|montana|missoulacurrent|missoulaindependent|bozeman|flathead|helena|billings|kxlf|ktvq|kbzk|nbcmontana|montanapublicradio|montanafreepress|missoulaevents|logjam|destinationmissoula|gatherboard|griztix|zootown/.test(host);
-      } catch {}
-      const keep = r.desk === "crime" ? (hasSignal && !hasWire) : ((hasSignal || fromMTSource) && !hasWire);
-      if (!keep) {
-        sqlite.prepare("UPDATE stories SET mod_state = 'rejected' WHERE id = ?").run(r.id);
-        demoted++;
-        if (r.desk === "crime") demotedCrime++;
-      }
-    }
-    sqlite.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(META_KEY, new Date().toISOString());
-    if (demoted > 0) console.log(`[storage] geo-strict purge marked ${demoted} stories rejected (${demotedCrime} from crime desk)`);
-  } catch (err) {
-    console.warn("[storage] geo-strict purge skipped:", err);
-  }
-}
-purgeNonLocalIfNeeded();
-
-// ------ Storage interface ------
-
+// ------ Query types ------
 export interface StoryQuery {
   desk?: string;
   q?: string;
   limit?: number;
   cursor?: number;
-  modState?: ModState | "all";
+  modState?: "all" | "draft" | "approved" | "rejected";
 }
 
-export interface IStorage {
-  listStories(q: StoryQuery): { items: Story[]; nextCursor: number | null; total: number };
-  getStory(id: number): Story | undefined;
-  createStory(input: InsertStory): Story;
-  updateStoryModState(id: number, modState: ModState): Story | undefined;
-  listEvents(limit?: number): EventItem[];
-  findEventByUrl(url: string): EventItem | undefined;
-  createEvent(input: InsertEvent): EventItem;
-  listSources(): Source[];
-  getPublishedCounts(): Map<string, number>;
-  getSource(id: number): Source | undefined;
-  updateSourceHealth(
-    id: number,
-    fields: { lastCheckedAt: string; lastStatus: string; lastMode: string | null; lastError: string | null; lastItems: number },
-  ): void;
-  findStoryByCanonicalUrl(canonicalUrl: string): Story | undefined;
-  findClusterCandidate(title: string, withinMs: number): Story | undefined;
-  attachStorySource(storyId: number, input: { sourceName: string; sourceUrl: string; sourceType: string }): StorySource;
-  listStorySources(storyId: number): StorySource[];
-  countStorySources(storyId: number): number;
-  recordIngestRun(run: Omit<IngestRun, "id">): IngestRun;
-  listIngestRuns(limit?: number): IngestRun[];
-  getTrendingTags(limit?: number): Array<{ tag: string; count: number }>;
-  getTopStories(limit?: number): Story[];
-  updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl">>): Story | undefined;
-  deleteStory(id: number): boolean;
-  logEdit(edit: Omit<StoryEdit, "id">): StoryEdit;
-  listEdits(limit?: number): StoryEdit[];
-  recentEditPatterns(days?: number): Array<{ sourceName: string; field: string; count: number }>;
-  createSource(input: InsertSource): Source;
-  deleteSource(id: number): boolean;
-  updateSource(id: number, patch: Partial<InsertSource>): Source | null;
-  bumpSourceTrust(id: number, delta: number): void;
-  updateSourceCategoryPriority(id: number, categoryPriority: string[]): void;
-  // Classification rules
-  listClassificationRules(): ClassificationRule[];
-  createClassificationRule(input: Omit<ClassificationRule, "id" | "hitCount">): ClassificationRule;
-  updateClassificationRule(id: number, patch: Partial<Omit<ClassificationRule, "id">>): ClassificationRule | null;
-  deleteClassificationRule(id: number): boolean;
-  incrementRuleHitCount(id: number): void;
-  // History stories
-  listHistoryStories(): HistoryStory[];
-  listAllHistoryStoriesForDesk(desk: string): HistoryStory[];
-  createHistoryStory(input: InsertHistoryStory): HistoryStory;
-  updateHistoryStory(id: number, patch: Partial<InsertHistoryStory>): HistoryStory | null;
-  setHistoryVisibility(ids: number[], visible: boolean): void;
-  markHistoryShownNow(ids: number[]): void;
-  bumpOldestHistoryStory(): void;
-  countHistoryStories(): number;
-  deleteHistoryStoryById(id: number): void;
-  // Job posts (community-submitted, admin-moderated)
-  listJobPosts(state?: JobPostState): JobPost[];
-  getJobPost(id: number): JobPost | null;
-  createJobPost(input: InsertJobPost): JobPost;
-  setJobPostState(id: number, state: JobPostState): JobPost | null;
-  deleteJobPost(id: number): boolean;
-  countJobPosts(state?: JobPostState): number;
-  // Meta flags
-  getMeta(key: string): string | null;
-  setMeta(key: string, value: string): void;
-}
-
-export class DatabaseStorage implements IStorage {
-  listStories(q: StoryQuery) {
-    const limit = q.limit ?? 20;
-    const cursor = q.cursor ?? 0;
-    const modState = q.modState ?? "approved";
-
-    const where: string[] = [];
-    const params: any[] = [];
-
-    if (modState !== "all") {
-      where.push("mod_state = ?");
-      params.push(modState);
-    }
-    if (q.desk && q.desk !== "all") {
-      where.push("desk = ?");
-      params.push(q.desk);
-    }
-    if (q.q && q.q.trim()) {
-      const needle = `%${q.q.trim().toLowerCase()}%`;
-      where.push("(lower(headline) LIKE ? OR lower(summary) LIKE ? OR lower(tags) LIKE ? OR lower(location) LIKE ?)");
-      params.push(needle, needle, needle, needle);
-    }
-
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-    const totalRow = sqlite
-      .prepare(`SELECT COUNT(*) AS c FROM stories ${whereSql}`)
-      .get(...params) as { c: number };
-
-    const rows = sqlite
-      .prepare(
-        `SELECT * FROM stories ${whereSql} ORDER BY published_at DESC LIMIT ? OFFSET ?`
-      )
-      .all(...params, limit, cursor) as any[];
-
-    const items: Story[] = rows.map(rowToStory);
-    const nextCursor = cursor + items.length < totalRow.c ? cursor + items.length : null;
-    return { items, nextCursor, total: totalRow.c };
-  }
-
-  getStory(id: number) {
-    const row = sqlite.prepare(`SELECT * FROM stories WHERE id = ? LIMIT 1`).get(id) as any;
-    return row ? rowToStory(row) : undefined;
-  }
-
-  createStory(input: InsertStory) {
-    return db.insert(stories).values(input).returning().get();
-  }
-
-  updateStoryModState(id: number, modState: ModState) {
-    sqlite.prepare("UPDATE stories SET mod_state = ? WHERE id = ?").run(modState, id);
-    return this.getStory(id);
-  }
-
-  listEvents(limit = 6) {
-    // Only return events that haven't ended yet. Use endsAt when present, else fall back to startsAt.
-    const nowIso = new Date().toISOString();
-    return db
-      .select()
-      .from(events)
-      .where(or(gte(events.endsAt, nowIso), and(isNull(events.endsAt), gte(events.startsAt, nowIso))))
-      .orderBy(asc(events.startsAt))
-      .limit(limit)
-      .all();
-  }
-
-  findEventByUrl(url: string): EventItem | undefined {
-    return db.select().from(events).where(eq(events.sourceUrl, url)).get();
-  }
-
-  createEvent(input: InsertEvent): EventItem {
-    return db.insert(events).values(input).returning().get();
-  }
-
-  listSources() {
-    return db.select().from(sources).orderBy(asc(sources.name)).all();
-  }
-
-  getPublishedCounts(): Map<string, number> {
-    const rows = sqlite
-      .prepare(
-        `SELECT lower(source_name) AS name, COUNT(*) AS c FROM stories WHERE mod_state = 'approved' GROUP BY lower(source_name)`,
-      )
-      .all() as Array<{ name: string; c: number }>;
-    const map = new Map<string, number>();
-    for (const r of rows) map.set(r.name, r.c);
-    return map;
-  }
-
-  getSource(id: number) {
-    return db.select().from(sources).where(eq(sources.id, id)).get();
-  }
-
-  updateSourceHealth(
-    id: number,
-    fields: { lastCheckedAt: string; lastStatus: string; lastMode: string | null; lastError: string | null; lastItems: number },
-  ) {
-    sqlite
-      .prepare(
-        `UPDATE sources SET last_checked_at = ?, last_status = ?, last_mode = ?, last_error = ?, last_items = ? WHERE id = ?`,
-      )
-      .run(fields.lastCheckedAt, fields.lastStatus, fields.lastMode, fields.lastError, fields.lastItems, id);
-  }
-
-  findStoryByCanonicalUrl(canonicalUrl: string) {
-    const direct = sqlite
-      .prepare(`SELECT * FROM stories WHERE source_url = ? LIMIT 1`)
-      .get(canonicalUrl) as any;
-    if (direct) return rowToStory(direct);
-    const via = sqlite
-      .prepare(
-        `SELECT stories.* FROM story_sources
-         JOIN stories ON stories.id = story_sources.story_id
-         WHERE story_sources.source_url = ? LIMIT 1`,
-      )
-      .get(canonicalUrl) as any;
-    return via ? rowToStory(via) : undefined;
-  }
-
-  findClusterCandidate(title: string, withinMs: number) {
-    const cutoff = new Date(Date.now() - withinMs).toISOString();
-    const rows = sqlite
-      .prepare(
-        `SELECT * FROM stories WHERE mod_state = 'approved' AND published_at > ? ORDER BY published_at DESC LIMIT 120`,
-      )
-      .all(cutoff) as any[];
-    const incoming = tokenize(title);
-    if (incoming.size < 3) return undefined;
-    let best: { row: any; score: number } | null = null;
-    for (const r of rows) {
-      const other = tokenize(r.headline);
-      const score = jaccard(incoming, other);
-      if (score >= 0.6 && (!best || score > best.score)) best = { row: r, score };
-    }
-    return best ? rowToStory(best.row) : undefined;
-  }
-
-  attachStorySource(storyId: number, input: { sourceName: string; sourceUrl: string; sourceType: string }) {
-    const existing = sqlite
-      .prepare(`SELECT * FROM story_sources WHERE story_id = ? AND source_url = ? LIMIT 1`)
-      .get(storyId, input.sourceUrl) as any;
-    if (existing) return rowToStorySource(existing);
-    const addedAt = new Date().toISOString();
-    const res = sqlite
-      .prepare(
-        `INSERT INTO story_sources (story_id, source_name, source_url, source_type, added_at) VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(storyId, input.sourceName, input.sourceUrl, input.sourceType, addedAt);
-    return {
-      id: Number(res.lastInsertRowid),
-      storyId,
-      sourceName: input.sourceName,
-      sourceUrl: input.sourceUrl,
-      sourceType: input.sourceType,
-      addedAt,
-    };
-  }
-
-  listStorySources(storyId: number) {
-    const rows = sqlite
-      .prepare(`SELECT * FROM story_sources WHERE story_id = ? ORDER BY added_at ASC`)
-      .all(storyId) as any[];
-    return rows.map(rowToStorySource);
-  }
-
-  countStorySources(storyId: number) {
-    const row = sqlite
-      .prepare(`SELECT COUNT(*) AS c FROM story_sources WHERE story_id = ?`)
-      .get(storyId) as { c: number };
-    return row.c;
-  }
-
-  recordIngestRun(run: Omit<IngestRun, "id">) {
-    const res = sqlite
-      .prepare(
-        `INSERT INTO ingest_runs (source_id, source_name, started_at, finished_at, mode, fetched, added, duplicates, clustered, errors, message)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        run.sourceId,
-        run.sourceName,
-        run.startedAt,
-        run.finishedAt,
-        run.mode,
-        run.fetched,
-        run.added,
-        run.duplicates,
-        run.clustered,
-        run.errors,
-        run.message ?? null,
-      );
-    return { id: Number(res.lastInsertRowid), ...run };
-  }
-
-  listIngestRuns(limit = 40) {
-    const rows = sqlite
-      .prepare(`SELECT * FROM ingest_runs ORDER BY started_at DESC LIMIT ?`)
-      .all(limit) as any[];
-    return rows.map(rowToIngestRun);
-  }
-
-  getTrendingTags(limit = 10) {
-    const rows = sqlite
-      .prepare(
-        `SELECT tags FROM stories WHERE mod_state = 'approved' ORDER BY published_at DESC LIMIT 80`
-      )
-      .all() as Array<{ tags: string }>;
-    const counts = new Map<string, number>();
-    for (const r of rows) {
-      try {
-        const arr: string[] = JSON.parse(r.tags);
-        for (const t of arr) counts.set(t, (counts.get(t) ?? 0) + 1);
-      } catch {}
-    }
-    return Array.from(counts.entries())
-      .map(([tag, count]) => ({ tag, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, limit);
-  }
-
-  updateStoryFields(
-    id: number,
-    fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl">>,
-  ): Story | undefined {
-    const sets: string[] = [];
-    const vals: any[] = [];
-    if (fields.headline !== undefined) { sets.push("headline = ?"); vals.push(fields.headline); }
-    if (fields.summary !== undefined) { sets.push("summary = ?"); vals.push(fields.summary); }
-    if (fields.desk !== undefined) { sets.push("desk = ?"); vals.push(fields.desk); }
-    if (fields.sourceUrl !== undefined) { sets.push("source_url = ?"); vals.push(fields.sourceUrl); }
-    if (sets.length === 0) return this.getStory(id);
-    vals.push(id);
-    sqlite.prepare(`UPDATE stories SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
-    return this.getStory(id);
-  }
-
-  deleteStory(id: number): boolean {
-    sqlite.prepare(`DELETE FROM story_sources WHERE story_id = ?`).run(id);
-    const res = sqlite.prepare(`DELETE FROM stories WHERE id = ?`).run(id);
-    return res.changes > 0;
-  }
-
-  logEdit(edit: Omit<StoryEdit, "id">): StoryEdit {
-    const res = sqlite
-      .prepare(
-        `INSERT INTO story_edits (story_id, field, before_value, after_value, source_name, edited_at) VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(edit.storyId, edit.field, edit.beforeValue ?? null, edit.afterValue ?? null, edit.sourceName ?? null, edit.editedAt);
-    return { id: Number(res.lastInsertRowid), ...edit };
-  }
-
-  listEdits(limit = 100): StoryEdit[] {
-    const rows = sqlite
-      .prepare(`SELECT * FROM story_edits ORDER BY edited_at DESC LIMIT ?`)
-      .all(limit) as any[];
-    return rows.map(rowToStoryEdit);
-  }
-
-  recentEditPatterns(days = 7): Array<{ sourceName: string; field: string; count: number }> {
-    const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
-    const rows = sqlite
-      .prepare(
-        `SELECT source_name, field, COUNT(*) AS c FROM story_edits
-         WHERE edited_at > ? AND source_name IS NOT NULL
-         GROUP BY source_name, field
-         ORDER BY c DESC
-         LIMIT 20`,
-      )
-      .all(cutoff) as Array<{ source_name: string; field: string; c: number }>;
-    return rows.map((r) => ({ sourceName: r.source_name, field: r.field, count: r.c }));
-  }
-
-  createSource(input: InsertSource): Source {
-    return db.insert(sources).values(input).returning().get();
-  }
-
-  deleteSource(id: number): boolean {
-    const res = sqlite.prepare(`DELETE FROM sources WHERE id = ?`).run(id);
-    return res.changes > 0;
-  }
-
-  updateSourceCategoryPriority(id: number, categoryPriority: string[]): void {
-    sqlite
-      .prepare(`UPDATE sources SET category_priority = ? WHERE id = ?`)
-      .run(JSON.stringify(categoryPriority), id);
-  }
-
-  updateSource(id: number, patch: Partial<InsertSource>): Source | null {
-    const allowed: Array<[keyof InsertSource, string]> = [
-      ["name", "name"], ["url", "url"], ["feedUrl", "feed_url"], ["feedType", "feed_type"],
-      ["parserKey", "parser_key"], ["sourceType", "source_type"], ["desks", "desks"],
-      ["categoryPriority", "category_priority"], ["cadenceMinutes", "cadence_minutes"],
-      ["active", "active"], ["category", "category"], ["handle", "handle"], ["platform", "platform"],
-      ["trustScore", "trust_score"],
-    ];
-    const sets: string[] = [];
-    const vals: any[] = [];
-    for (const [key, col] of allowed) {
-      if (key in patch) {
-        sets.push(`${col} = ?`);
-        let v: any = (patch as any)[key];
-        if (key === "desks" && Array.isArray(v)) v = JSON.stringify(v);
-        if (key === "categoryPriority" && Array.isArray(v)) v = JSON.stringify(v);
-        if (key === "active" && typeof v === "boolean") v = v ? 1 : 0;
-        vals.push(v);
-      }
-    }
-    if (sets.length === 0) return this.getSource(id) ?? null;
-    vals.push(id);
-    const res = sqlite.prepare(`UPDATE sources SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
-    if (res.changes === 0) return null;
-    return this.getSource(id) ?? null;
-  }
-
-  bumpSourceTrust(id: number, delta: number): void {
-    sqlite
-      .prepare(`UPDATE sources SET trust_score = MAX(0, MIN(100, trust_score + ?)) WHERE id = ?`)
-      .run(delta, id);
-  }
-
-  // ---- Classification rules ----
-  listClassificationRules(): ClassificationRule[] {
-    const rows = sqlite
-      .prepare(`SELECT * FROM classification_rules ORDER BY priority DESC, id ASC`)
-      .all() as any[];
-    return rows.map(rowToRule);
-  }
-
-  createClassificationRule(input: Omit<ClassificationRule, "id" | "hitCount">): ClassificationRule {
-    const res = sqlite
-      .prepare(
-        `INSERT INTO classification_rules (match_field, pattern, action, value, priority, notes, created_at, created_by, hit_count, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-      )
-      .run(
-        input.matchField, input.pattern, input.action, input.value,
-        input.priority ?? 0, input.notes ?? null,
-        input.createdAt, input.createdBy ?? "admin",
-        input.active === false ? 0 : 1,
-      );
-    const row = sqlite.prepare(`SELECT * FROM classification_rules WHERE id = ?`).get(Number(res.lastInsertRowid)) as any;
-    return rowToRule(row);
-  }
-
-  updateClassificationRule(id: number, patch: Partial<Omit<ClassificationRule, "id">>): ClassificationRule | null {
-    const allowed: Array<[keyof ClassificationRule, string]> = [
-      ["matchField", "match_field"], ["pattern", "pattern"], ["action", "action"], ["value", "value"],
-      ["priority", "priority"], ["notes", "notes"], ["active", "active"],
-    ];
-    const sets: string[] = [];
-    const vals: any[] = [];
-    for (const [key, col] of allowed) {
-      if (key in patch) {
-        sets.push(`${col} = ?`);
-        let v: any = (patch as any)[key];
-        if (key === "active" && typeof v === "boolean") v = v ? 1 : 0;
-        vals.push(v);
-      }
-    }
-    if (sets.length === 0) {
-      const row = sqlite.prepare(`SELECT * FROM classification_rules WHERE id = ?`).get(id) as any;
-      return row ? rowToRule(row) : null;
-    }
-    vals.push(id);
-    const res = sqlite.prepare(`UPDATE classification_rules SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
-    if (res.changes === 0) return null;
-    const row = sqlite.prepare(`SELECT * FROM classification_rules WHERE id = ?`).get(id) as any;
-    return row ? rowToRule(row) : null;
-  }
-
-  deleteClassificationRule(id: number): boolean {
-    const res = sqlite.prepare(`DELETE FROM classification_rules WHERE id = ?`).run(id);
-    return res.changes > 0;
-  }
-
-  incrementRuleHitCount(id: number): void {
-    sqlite.prepare(`UPDATE classification_rules SET hit_count = hit_count + 1 WHERE id = ?`).run(id);
-  }
-
-  getTopStories(limit = 6) {
-    // One story per desk, prefer recent + higher-risk. We pull a wider window
-    // (2 weeks) so smaller desks still surface, then dedupe to one per desk.
-    const now = Date.now();
-    const windowStart = new Date(now - 14 * 24 * 3600 * 1000).toISOString();
-    const rows = sqlite
-      .prepare(
-        `SELECT * FROM stories
-         WHERE mod_state = 'approved' AND published_at > ?
-         ORDER BY
-           CASE risk_level WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
-           published_at DESC`
-      )
-      .all(windowStart) as any[];
-    const seen = new Set<string>();
-    const out: any[] = [];
-    for (const r of rows) {
-      const desk = r.desk as string | null;
-      if (!desk) continue;
-      if (seen.has(desk)) continue;
-      seen.add(desk);
-      out.push(r);
-      if (out.length >= limit) break;
-    }
-    return out.map(rowToStory);
-  }
-
-  // History stories
-  // Public-facing list: only visible rows. Admin uses listAllHistoryStoriesForDesk for full pool.
-  listHistoryStories(): HistoryStory[] {
-    const rows = sqlite
-      .prepare(`SELECT * FROM history_stories WHERE is_visible = 1 ORDER BY last_bumped_at DESC`)
-      .all() as any[];
-    return rows.map(rowToHistoryStory);
-  }
-
-  listAllHistoryStoriesForDesk(desk: string): HistoryStory[] {
-    const rows = sqlite
-      .prepare(`SELECT * FROM history_stories WHERE desk = ? ORDER BY published_at DESC`)
-      .all(desk) as any[];
-    return rows.map(rowToHistoryStory);
-  }
-
-  createHistoryStory(input: InsertHistoryStory): HistoryStory {
-    const res = sqlite
-      .prepare(
-        `INSERT INTO history_stories (headline, summary, source_url, desk, kind, published_at, last_bumped_at, is_visible) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-      )
-      .run(
-        input.headline, input.summary, input.sourceUrl ?? null,
-        (input as any).desk ?? "history", (input as any).kind ?? "history",
-        input.publishedAt, input.lastBumpedAt,
-      );
-    const row = sqlite.prepare(`SELECT * FROM history_stories WHERE id = ?`).get(Number(res.lastInsertRowid)) as any;
-    return rowToHistoryStory(row);
-  }
-
-  updateHistoryStory(id: number, patch: Partial<InsertHistoryStory>): HistoryStory | null {
-    const cols: Array<[keyof InsertHistoryStory | "isVisible", string]> = [
-      ["headline", "headline"],
-      ["summary", "summary"],
-      ["sourceUrl", "source_url"],
-      ["desk", "desk"],
-      ["kind", "kind"],
-      ["isVisible" as any, "is_visible"],
-      ["lastBumpedAt", "last_bumped_at"],
-    ];
-    const sets: string[] = [];
-    const vals: any[] = [];
-    for (const [key, col] of cols) {
-      if (key in patch) {
-        sets.push(`${col} = ?`);
-        let v: any = (patch as any)[key];
-        if (col === "is_visible" && typeof v === "boolean") v = v ? 1 : 0;
-        vals.push(v);
-      }
-    }
-    if (sets.length === 0) {
-      const row = sqlite.prepare(`SELECT * FROM history_stories WHERE id = ?`).get(id) as any;
-      return row ? rowToHistoryStory(row) : null;
-    }
-    vals.push(id);
-    const res = sqlite.prepare(`UPDATE history_stories SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
-    if (res.changes === 0) return null;
-    const row = sqlite.prepare(`SELECT * FROM history_stories WHERE id = ?`).get(id) as any;
-    return row ? rowToHistoryStory(row) : null;
-  }
-
-  setHistoryVisibility(ids: number[], visible: boolean): void {
-    if (!ids.length) return;
-    const placeholders = ids.map(() => "?").join(",");
-    sqlite.prepare(`UPDATE history_stories SET is_visible = ? WHERE id IN (${placeholders})`).run(visible ? 1 : 0, ...ids);
-  }
-
-  markHistoryShownNow(ids: number[]): void {
-    if (!ids.length) return;
-    const now = new Date().toISOString();
-    const placeholders = ids.map(() => "?").join(",");
-    sqlite.prepare(`UPDATE history_stories SET last_shown_at = ? WHERE id IN (${placeholders})`).run(now, ...ids);
-  }
-
-  bumpOldestHistoryStory(): void {
-    const oldest = sqlite
-      .prepare(`SELECT id FROM history_stories ORDER BY last_bumped_at ASC LIMIT 1`)
-      .get() as { id: number } | undefined;
-    if (!oldest) return;
-    const now = new Date().toISOString();
-    sqlite.prepare(`UPDATE history_stories SET last_bumped_at = ? WHERE id = ?`).run(now, oldest.id);
-  }
-
-  countHistoryStories(): number {
-    const row = sqlite.prepare(`SELECT COUNT(*) AS c FROM history_stories`).get() as { c: number };
-    return row.c;
-  }
-
-  // Meta
-  getMeta(key: string): string | null {
-    const row = sqlite.prepare(`SELECT value FROM meta WHERE key = ?`).get(key) as { value: string } | undefined;
-    return row?.value ?? null;
-  }
-
-  setMeta(key: string, value: string): void {
-    sqlite
-      .prepare(`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
-      .run(key, value);
-  }
-
-  deleteHistoryStoryById(id: number): void {
-    sqlite.prepare("DELETE FROM history_stories WHERE id = ?").run(id);
-  }
-
-  // ----- Job posts -----
-  listJobPosts(state?: JobPostState): JobPost[] {
-    const rows = state
-      ? (sqlite
-          .prepare(`SELECT * FROM job_posts WHERE state = ? ORDER BY submitted_at DESC`)
-          .all(state) as any[])
-      : (sqlite
-          .prepare(`SELECT * FROM job_posts ORDER BY submitted_at DESC`)
-          .all() as any[]);
-    return rows.map(rowToJobPost);
-  }
-
-  getJobPost(id: number): JobPost | null {
-    const row = sqlite.prepare(`SELECT * FROM job_posts WHERE id = ?`).get(id) as any;
-    return row ? rowToJobPost(row) : null;
-  }
-
-  createJobPost(input: InsertJobPost): JobPost {
-    const submittedAt = new Date().toISOString();
-    const res = sqlite
-      .prepare(
-        `INSERT INTO job_posts (title, business, address, phone, pay, body, submitter_email, state, submitted_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
-      )
-      .run(
-        input.title.trim(),
-        input.business.trim(),
-        input.address?.trim() || null,
-        input.phone?.trim() || null,
-        input.pay?.trim() || null,
-        input.body.trim(),
-        input.submitterEmail?.trim() || null,
-        submittedAt,
-      );
-    const row = sqlite.prepare(`SELECT * FROM job_posts WHERE id = ?`).get(Number(res.lastInsertRowid)) as any;
-    return rowToJobPost(row);
-  }
-
-  setJobPostState(id: number, state: JobPostState): JobPost | null {
-    const approvedAt = state === "approved" ? new Date().toISOString() : null;
-    sqlite
-      .prepare(`UPDATE job_posts SET state = ?, approved_at = COALESCE(?, approved_at) WHERE id = ?`)
-      .run(state, approvedAt, id);
-    return this.getJobPost(id);
-  }
-
-  deleteJobPost(id: number): boolean {
-    const res = sqlite.prepare(`DELETE FROM job_posts WHERE id = ?`).run(id);
-    return res.changes > 0;
-  }
-
-  countJobPosts(state?: JobPostState): number {
-    const row = state
-      ? (sqlite.prepare(`SELECT COUNT(*) AS c FROM job_posts WHERE state = ?`).get(state) as { c: number })
-      : (sqlite.prepare(`SELECT COUNT(*) AS c FROM job_posts`).get() as { c: number });
-    return row.c;
-  }
-}
-
-function rowToJobPost(row: any): JobPost {
+// ------ Row mappers (snake_case DB rows → camelCase types) ------
+function rowToStory(r: any): Story {
   return {
-    id: row.id,
-    title: row.title,
-    business: row.business,
-    address: row.address,
-    phone: row.phone,
-    pay: row.pay,
-    body: row.body,
-    submitterEmail: row.submitter_email,
-    state: row.state,
-    submittedAt: row.submitted_at,
-    approvedAt: row.approved_at,
+    id: r.id,
+    headline: r.headline,
+    summary: r.summary,
+    whyItMatters: r.why_it_matters ?? r.whyItMatters ?? null,
+    desk: r.desk,
+    tags: r.tags,
+    sourceName: r.source_name ?? r.sourceName,
+    sourceUrl: r.source_url ?? r.sourceUrl,
+    sourceType: r.source_type ?? r.sourceType,
+    publishedAt: r.published_at ?? r.publishedAt,
+    fetchedAt: r.fetched_at ?? r.fetchedAt,
+    location: r.location ?? null,
+    status: r.status ?? null,
+    riskLevel: r.risk_level ?? r.riskLevel,
+    isSeeded: r.is_seeded === true || r.is_seeded === 1 || r.isSeeded === true,
+    modState: r.mod_state ?? r.modState,
+    politicalScope: r.political_scope ?? r.politicalScope ?? null,
+    eventDate: r.event_date ?? r.eventDate ?? null,
   };
 }
 
+function rowToEvent(r: any): EventItem {
+  return {
+    id: r.id,
+    title: r.title,
+    venue: r.venue,
+    startsAt: r.starts_at ?? r.startsAt,
+    endsAt: r.ends_at ?? r.endsAt ?? null,
+    sourceName: r.source_name ?? r.sourceName,
+    sourceUrl: r.source_url ?? r.sourceUrl,
+    tag: r.tag ?? null,
+    desk: r.desk ?? null,
+    description: r.description ?? null,
+  };
+}
+
+function rowToSource(r: any): Source {
+  return {
+    id: r.id,
+    name: r.name,
+    url: r.url,
+    feedUrl: r.feed_url ?? r.feedUrl ?? null,
+    feedType: r.feed_type ?? r.feedType,
+    parserKey: r.parser_key ?? r.parserKey ?? null,
+    sourceType: r.source_type ?? r.sourceType,
+    desks: r.desks,
+    categoryPriority: r.category_priority ?? r.categoryPriority ?? null,
+    cadenceMinutes: r.cadence_minutes ?? r.cadenceMinutes,
+    lastCheckedAt: r.last_checked_at ?? r.lastCheckedAt ?? null,
+    lastStatus: r.last_status ?? r.lastStatus,
+    lastMode: r.last_mode ?? r.lastMode ?? null,
+    lastError: r.last_error ?? r.lastError ?? null,
+    lastItems: r.last_items ?? r.lastItems,
+    active: r.active === true || r.active === 1,
+    category: r.category,
+    handle: r.handle ?? null,
+    platform: r.platform ?? null,
+    trustScore: r.trust_score ?? r.trustScore ?? 50,
+  };
+}
+
+function rowToIngestRun(r: any): IngestRun {
+  return {
+    id: r.id,
+    sourceId: r.source_id ?? r.sourceId,
+    sourceName: r.source_name ?? r.sourceName,
+    startedAt: r.started_at ?? r.startedAt,
+    finishedAt: r.finished_at ?? r.finishedAt,
+    mode: r.mode,
+    fetched: r.fetched,
+    added: r.added,
+    duplicates: r.duplicates,
+    clustered: r.clustered,
+    errors: r.errors,
+    message: r.message ?? null,
+  };
+}
+
+function rowToStorySource(r: any): StorySource {
+  return {
+    id: r.id,
+    storyId: r.story_id ?? r.storyId,
+    sourceName: r.source_name ?? r.sourceName,
+    sourceUrl: r.source_url ?? r.sourceUrl,
+    sourceType: r.source_type ?? r.sourceType,
+    addedAt: r.added_at ?? r.addedAt,
+  };
+}
+
+function rowToStoryEdit(r: any): StoryEdit {
+  return {
+    id: r.id,
+    storyId: r.story_id ?? r.storyId,
+    field: r.field,
+    beforeValue: r.before_value ?? r.beforeValue ?? null,
+    afterValue: r.after_value ?? r.afterValue ?? null,
+    sourceName: r.source_name ?? r.sourceName ?? null,
+    editedAt: r.edited_at ?? r.editedAt,
+  };
+}
+
+function rowToHistoryStory(r: any): HistoryStory {
+  return {
+    id: r.id,
+    headline: r.headline,
+    summary: r.summary,
+    sourceUrl: r.source_url ?? r.sourceUrl ?? null,
+    desk: r.desk ?? "history",
+    kind: r.kind ?? "history",
+    publishedAt: r.published_at ?? r.publishedAt,
+    lastBumpedAt: r.last_bumped_at ?? r.lastBumpedAt,
+    isVisible: r.is_visible === true || r.is_visible === 1 || r.isVisible === true || r.is_visible == null,
+    lastShownAt: r.last_shown_at ?? r.lastShownAt ?? null,
+  };
+}
+
+function rowToRule(r: any): ClassificationRule {
+  return {
+    id: r.id,
+    matchField: r.match_field ?? r.matchField,
+    pattern: r.pattern,
+    action: r.action,
+    value: r.value,
+    priority: r.priority ?? 0,
+    notes: r.notes ?? null,
+    createdAt: r.created_at ?? r.createdAt,
+    createdBy: r.created_by ?? r.createdBy ?? "admin",
+    hitCount: r.hit_count ?? r.hitCount ?? 0,
+    active: r.active === true || r.active === 1,
+  };
+}
+
+function rowToJobPost(r: any): JobPost {
+  return {
+    id: r.id,
+    title: r.title,
+    business: r.business,
+    address: r.address ?? null,
+    phone: r.phone ?? null,
+    pay: r.pay ?? null,
+    body: r.body,
+    submitterEmail: r.submitter_email ?? r.submitterEmail ?? null,
+    state: r.state,
+    submittedAt: r.submitted_at ?? r.submittedAt,
+    approvedAt: r.approved_at ?? r.approvedAt ?? null,
+  };
+}
+
+// ------ Title clustering helpers (used by ingester) ------
 function tokenize(s: string): Set<string> {
   const stop = new Set([
     "the", "a", "an", "and", "or", "for", "of", "to", "in", "on", "at", "by", "with", "from",
@@ -1099,98 +230,507 @@ function jaccard(a: Set<string>, b: Set<string>) {
   return union === 0 ? 0 : inter / union;
 }
 
-function rowToIngestRun(r: any): IngestRun {
-  return {
-    id: r.id,
-    sourceId: r.source_id,
-    sourceName: r.source_name,
-    startedAt: r.started_at,
-    finishedAt: r.finished_at,
-    mode: r.mode,
-    fetched: r.fetched,
-    added: r.added,
-    duplicates: r.duplicates,
-    clustered: r.clustered,
-    errors: r.errors,
-    message: r.message,
-  };
+// ------ Storage interface ------
+export interface IStorage {
+  listStories(q: StoryQuery): Promise<{ items: Story[]; nextCursor: number | null; total: number }>;
+  getStory(id: number): Promise<Story | undefined>;
+  createStory(input: InsertStory): Promise<Story>;
+  updateStoryModState(id: number, modState: ModState): Promise<Story | undefined>;
+  listEvents(limit?: number): Promise<EventItem[]>;
+  findEventByUrl(url: string): Promise<EventItem | undefined>;
+  createEvent(input: InsertEvent): Promise<EventItem>;
+  listSources(): Promise<Source[]>;
+  getPublishedCounts(): Promise<Map<string, number>>;
+  getSource(id: number): Promise<Source | undefined>;
+  updateSourceHealth(id: number, fields: { lastCheckedAt: string; lastStatus: string; lastMode: string | null; lastError: string | null; lastItems: number }): Promise<void>;
+  findStoryByCanonicalUrl(canonicalUrl: string): Promise<Story | undefined>;
+  findClusterCandidate(title: string, withinMs: number): Promise<Story | undefined>;
+  attachStorySource(storyId: number, input: { sourceName: string; sourceUrl: string; sourceType: string }): Promise<StorySource>;
+  listStorySources(storyId: number): Promise<StorySource[]>;
+  countStorySources(storyId: number): Promise<number>;
+  recordIngestRun(run: Omit<IngestRun, "id">): Promise<IngestRun>;
+  listIngestRuns(limit?: number): Promise<IngestRun[]>;
+  getTrendingTags(limit?: number): Promise<Array<{ tag: string; count: number }>>;
+  getTopStories(limit?: number): Promise<Story[]>;
+  updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl">>): Promise<Story | undefined>;
+  deleteStory(id: number): Promise<boolean>;
+  logEdit(edit: Omit<StoryEdit, "id">): Promise<StoryEdit>;
+  listEdits(limit?: number): Promise<StoryEdit[]>;
+  recentEditPatterns(days?: number): Promise<Array<{ sourceName: string; field: string; count: number }>>;
+  createSource(input: InsertSource): Promise<Source>;
+  deleteSource(id: number): Promise<boolean>;
+  updateSource(id: number, patch: Partial<InsertSource>): Promise<Source | null>;
+  bumpSourceTrust(id: number, delta: number): Promise<void>;
+  updateSourceCategoryPriority(id: number, categoryPriority: string[]): Promise<void>;
+  listClassificationRules(): Promise<ClassificationRule[]>;
+  createClassificationRule(input: Omit<ClassificationRule, "id" | "hitCount">): Promise<ClassificationRule>;
+  updateClassificationRule(id: number, patch: Partial<Omit<ClassificationRule, "id">>): Promise<ClassificationRule | null>;
+  deleteClassificationRule(id: number): Promise<boolean>;
+  incrementRuleHitCount(id: number): Promise<void>;
+  listHistoryStories(): Promise<HistoryStory[]>;
+  listAllHistoryStoriesForDesk(desk: string): Promise<HistoryStory[]>;
+  createHistoryStory(input: InsertHistoryStory): Promise<HistoryStory>;
+  updateHistoryStory(id: number, patch: Partial<InsertHistoryStory>): Promise<HistoryStory | null>;
+  setHistoryVisibility(ids: number[], visible: boolean): Promise<void>;
+  markHistoryShownNow(ids: number[]): Promise<void>;
+  bumpOldestHistoryStory(): Promise<void>;
+  countHistoryStories(): Promise<number>;
+  deleteHistoryStoryById(id: number): Promise<void>;
+  listJobPosts(state?: JobPostState): Promise<JobPost[]>;
+  getJobPost(id: number): Promise<JobPost | null>;
+  createJobPost(input: InsertJobPost): Promise<JobPost>;
+  setJobPostState(id: number, state: JobPostState): Promise<JobPost | null>;
+  deleteJobPost(id: number): Promise<boolean>;
+  countJobPosts(state?: JobPostState): Promise<number>;
+  getMeta(key: string): Promise<string | null>;
+  setMeta(key: string, value: string): Promise<void>;
 }
 
-function rowToStoryEdit(r: any): StoryEdit {
-  return {
-    id: r.id,
-    storyId: r.story_id,
-    field: r.field,
-    beforeValue: r.before_value,
-    afterValue: r.after_value,
-    sourceName: r.source_name,
-    editedAt: r.edited_at,
-  };
-}
+// ------ DatabaseStorage implementation ------
+export class DatabaseStorage implements IStorage {
+  // ----- Stories -----
+  async listStories(q: StoryQuery): Promise<{ items: Story[]; nextCursor: number | null; total: number }> {
+    const limit = q.limit ?? 20;
+    const cursor = q.cursor ?? 0;
+    const modState = q.modState ?? "approved";
+    const needle = q.q && q.q.trim() ? `%${q.q.trim().toLowerCase()}%` : null;
 
-function rowToStorySource(r: any): StorySource {
-  return {
-    id: r.id,
-    storyId: r.story_id,
-    sourceName: r.source_name,
-    sourceUrl: r.source_url,
-    sourceType: r.source_type,
-    addedAt: r.added_at,
-  };
-}
+    // Build WHERE using SQL fragments. Use parameterized queries for safety.
+    const conditions: any[] = [];
+    if (modState !== "all") conditions.push(eq(stories.modState, modState));
+    if (q.desk && q.desk !== "all") conditions.push(eq(stories.desk, q.desk));
+    if (needle) {
+      conditions.push(sql`(lower(${stories.headline}) LIKE ${needle} OR lower(${stories.summary}) LIKE ${needle} OR lower(${stories.tags}) LIKE ${needle} OR lower(coalesce(${stories.location}, '')) LIKE ${needle})`);
+    }
+    const whereClause = conditions.length ? and(...conditions) : undefined;
 
-function rowToStory(r: any): Story {
-  return {
-    id: r.id,
-    headline: r.headline,
-    summary: r.summary,
-    whyItMatters: r.why_it_matters,
-    desk: r.desk,
-    tags: r.tags,
-    sourceName: r.source_name,
-    sourceUrl: r.source_url,
-    sourceType: r.source_type,
-    publishedAt: r.published_at,
-    fetchedAt: r.fetched_at,
-    location: r.location,
-    status: r.status,
-    riskLevel: r.risk_level,
-    isSeeded: !!r.is_seeded,
-    modState: r.mod_state,
-    politicalScope: r.political_scope ?? null,
-    eventDate: r.event_date ?? null,
-  };
-}
+    const totalRes = await db.select({ c: sql<number>`count(*)::int` }).from(stories).where(whereClause as any);
+    const total = totalRes[0]?.c ?? 0;
 
-function rowToHistoryStory(r: any): HistoryStory {
-  return {
-    id: r.id,
-    headline: r.headline,
-    summary: r.summary,
-    sourceUrl: r.source_url ?? null,
-    desk: r.desk ?? "history",
-    kind: r.kind ?? "history",
-    publishedAt: r.published_at,
-    lastBumpedAt: r.last_bumped_at,
-    isVisible: r.is_visible === 1 || r.is_visible === true || r.is_visible == null,
-    lastShownAt: r.last_shown_at ?? null,
-  };
-}
+    const rows = await db
+      .select()
+      .from(stories)
+      .where(whereClause as any)
+      .orderBy(desc(stories.publishedAt))
+      .limit(limit)
+      .offset(cursor);
 
-function rowToRule(r: any): ClassificationRule {
-  return {
-    id: r.id,
-    matchField: r.match_field,
-    pattern: r.pattern,
-    action: r.action,
-    value: r.value,
-    priority: r.priority ?? 0,
-    notes: r.notes ?? null,
-    createdAt: r.created_at,
-    createdBy: r.created_by ?? "admin",
-    hitCount: r.hit_count ?? 0,
-    active: r.active === 1 || r.active === true,
-  };
+    const items = rows.map(rowToStory);
+    const nextCursor = cursor + items.length < total ? cursor + items.length : null;
+    return { items, nextCursor, total };
+  }
+
+  async getStory(id: number): Promise<Story | undefined> {
+    const rows = await db.select().from(stories).where(eq(stories.id, id)).limit(1);
+    return rows[0] ? rowToStory(rows[0]) : undefined;
+  }
+
+  async createStory(input: InsertStory): Promise<Story> {
+    const rows = await db.insert(stories).values(input).returning();
+    return rowToStory(rows[0]);
+  }
+
+  async updateStoryModState(id: number, modState: ModState): Promise<Story | undefined> {
+    await db.update(stories).set({ modState }).where(eq(stories.id, id));
+    return this.getStory(id);
+  }
+
+  // ----- Events -----
+  async listEvents(limit = 6): Promise<EventItem[]> {
+    const nowIso = new Date().toISOString();
+    const rows = await db
+      .select()
+      .from(events)
+      .where(or(gte(events.endsAt, nowIso), and(isNull(events.endsAt), gte(events.startsAt, nowIso))))
+      .orderBy(asc(events.startsAt))
+      .limit(limit);
+    return rows.map(rowToEvent);
+  }
+
+  async findEventByUrl(url: string): Promise<EventItem | undefined> {
+    const rows = await db.select().from(events).where(eq(events.sourceUrl, url)).limit(1);
+    return rows[0] ? rowToEvent(rows[0]) : undefined;
+  }
+
+  async createEvent(input: InsertEvent): Promise<EventItem> {
+    const rows = await db.insert(events).values(input).returning();
+    return rowToEvent(rows[0]);
+  }
+
+  // ----- Sources -----
+  async listSources(): Promise<Source[]> {
+    const rows = await db.select().from(sources).orderBy(asc(sources.name));
+    return rows.map(rowToSource);
+  }
+
+  async getPublishedCounts(): Promise<Map<string, number>> {
+    const rows = await db.execute(sql`SELECT lower(source_name) AS name, COUNT(*)::int AS c FROM stories WHERE mod_state = 'approved' GROUP BY lower(source_name)`);
+    const map = new Map<string, number>();
+    for (const r of rows as unknown as Array<{ name: string; c: number }>) map.set(r.name, r.c);
+    return map;
+  }
+
+  async getSource(id: number): Promise<Source | undefined> {
+    const rows = await db.select().from(sources).where(eq(sources.id, id)).limit(1);
+    return rows[0] ? rowToSource(rows[0]) : undefined;
+  }
+
+  async updateSourceHealth(
+    id: number,
+    fields: { lastCheckedAt: string; lastStatus: string; lastMode: string | null; lastError: string | null; lastItems: number },
+  ): Promise<void> {
+    await db.update(sources).set({
+      lastCheckedAt: fields.lastCheckedAt,
+      lastStatus: fields.lastStatus,
+      lastMode: fields.lastMode,
+      lastError: fields.lastError,
+      lastItems: fields.lastItems,
+    }).where(eq(sources.id, id));
+  }
+
+  async createSource(input: InsertSource): Promise<Source> {
+    const rows = await db.insert(sources).values(input).returning();
+    return rowToSource(rows[0]);
+  }
+
+  async deleteSource(id: number): Promise<boolean> {
+    const res = await db.delete(sources).where(eq(sources.id, id)).returning({ id: sources.id });
+    return res.length > 0;
+  }
+
+  async updateSourceCategoryPriority(id: number, categoryPriority: string[]): Promise<void> {
+    await db.update(sources).set({ categoryPriority: JSON.stringify(categoryPriority) }).where(eq(sources.id, id));
+  }
+
+  async updateSource(id: number, patch: Partial<InsertSource>): Promise<Source | null> {
+    const set: Record<string, any> = {};
+    const keys: Array<keyof InsertSource> = [
+      "name", "url", "feedUrl", "feedType", "parserKey", "sourceType", "desks",
+      "categoryPriority", "cadenceMinutes", "active", "category", "handle", "platform", "trustScore",
+    ];
+    for (const k of keys) {
+      if (k in patch) {
+        let v: any = (patch as any)[k];
+        if ((k === "desks" || k === "categoryPriority") && Array.isArray(v)) v = JSON.stringify(v);
+        set[k] = v;
+      }
+    }
+    if (Object.keys(set).length === 0) return (await this.getSource(id)) ?? null;
+    const rows = await db.update(sources).set(set).where(eq(sources.id, id)).returning();
+    return rows[0] ? rowToSource(rows[0]) : null;
+  }
+
+  async bumpSourceTrust(id: number, delta: number): Promise<void> {
+    await db.execute(sql`UPDATE sources SET trust_score = GREATEST(0, LEAST(100, trust_score + ${delta})) WHERE id = ${id}`);
+  }
+
+  // ----- Clustering / dedupe -----
+  async findStoryByCanonicalUrl(canonicalUrl: string): Promise<Story | undefined> {
+    const direct = await db.select().from(stories).where(eq(stories.sourceUrl, canonicalUrl)).limit(1);
+    if (direct[0]) return rowToStory(direct[0]);
+    const via = await db.execute(sql`SELECT stories.* FROM story_sources JOIN stories ON stories.id = story_sources.story_id WHERE story_sources.source_url = ${canonicalUrl} LIMIT 1`);
+    const r = (via as any)[0];
+    return r ? rowToStory(r) : undefined;
+  }
+
+  async findClusterCandidate(title: string, withinMs: number): Promise<Story | undefined> {
+    const cutoff = new Date(Date.now() - withinMs).toISOString();
+    const rows = await db
+      .select()
+      .from(stories)
+      .where(and(eq(stories.modState, "approved"), gte(stories.publishedAt, cutoff)))
+      .orderBy(desc(stories.publishedAt))
+      .limit(120);
+    const incoming = tokenize(title);
+    if (incoming.size < 3) return undefined;
+    let best: { row: any; score: number } | null = null;
+    for (const r of rows) {
+      const other = tokenize(r.headline);
+      const score = jaccard(incoming, other);
+      if (score >= 0.6 && (!best || score > best.score)) best = { row: r, score };
+    }
+    return best ? rowToStory(best.row) : undefined;
+  }
+
+  async attachStorySource(storyId: number, input: { sourceName: string; sourceUrl: string; sourceType: string }): Promise<StorySource> {
+    const existing = await db.select().from(storySources).where(and(eq(storySources.storyId, storyId), eq(storySources.sourceUrl, input.sourceUrl))).limit(1);
+    if (existing[0]) return rowToStorySource(existing[0]);
+    const addedAt = new Date().toISOString();
+    const rows = await db.insert(storySources).values({ storyId, sourceName: input.sourceName, sourceUrl: input.sourceUrl, sourceType: input.sourceType, addedAt }).returning();
+    return rowToStorySource(rows[0]);
+  }
+
+  async listStorySources(storyId: number): Promise<StorySource[]> {
+    const rows = await db.select().from(storySources).where(eq(storySources.storyId, storyId)).orderBy(asc(storySources.addedAt));
+    return rows.map(rowToStorySource);
+  }
+
+  async countStorySources(storyId: number): Promise<number> {
+    const res = await db.select({ c: sql<number>`count(*)::int` }).from(storySources).where(eq(storySources.storyId, storyId));
+    return res[0]?.c ?? 0;
+  }
+
+  // ----- Ingest runs -----
+  async recordIngestRun(run: Omit<IngestRun, "id">): Promise<IngestRun> {
+    const rows = await db.insert(ingestRuns).values(run).returning();
+    return rowToIngestRun(rows[0]);
+  }
+
+  async listIngestRuns(limit = 40): Promise<IngestRun[]> {
+    const rows = await db.select().from(ingestRuns).orderBy(desc(ingestRuns.startedAt)).limit(limit);
+    return rows.map(rowToIngestRun);
+  }
+
+  // ----- Tags / top stories -----
+  async getTrendingTags(limit = 10): Promise<Array<{ tag: string; count: number }>> {
+    const rows = await db
+      .select({ tags: stories.tags })
+      .from(stories)
+      .where(eq(stories.modState, "approved"))
+      .orderBy(desc(stories.publishedAt))
+      .limit(80);
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      try {
+        const arr: string[] = JSON.parse(r.tags);
+        for (const t of arr) counts.set(t, (counts.get(t) ?? 0) + 1);
+      } catch {}
+    }
+    return Array.from(counts.entries())
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit);
+  }
+
+  async getTopStories(limit = 6): Promise<Story[]> {
+    const windowStart = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString();
+    const rows = await db.execute(sql`
+      SELECT * FROM stories
+      WHERE mod_state = 'approved' AND published_at > ${windowStart}
+      ORDER BY
+        CASE risk_level WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
+        published_at DESC
+      LIMIT 200
+    `);
+    const seen = new Set<string>();
+    const out: any[] = [];
+    for (const r of rows as any[]) {
+      const desk = r.desk as string | null;
+      if (!desk || seen.has(desk)) continue;
+      seen.add(desk);
+      out.push(r);
+      if (out.length >= limit) break;
+    }
+    return out.map(rowToStory);
+  }
+
+  // ----- Story edit/delete + log -----
+  async updateStoryFields(
+    id: number,
+    fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl">>,
+  ): Promise<Story | undefined> {
+    const set: Record<string, any> = {};
+    if (fields.headline !== undefined) set.headline = fields.headline;
+    if (fields.summary !== undefined) set.summary = fields.summary;
+    if (fields.desk !== undefined) set.desk = fields.desk;
+    if (fields.sourceUrl !== undefined) set.sourceUrl = fields.sourceUrl;
+    if (Object.keys(set).length === 0) return this.getStory(id);
+    await db.update(stories).set(set).where(eq(stories.id, id));
+    return this.getStory(id);
+  }
+
+  async deleteStory(id: number): Promise<boolean> {
+    await db.delete(storySources).where(eq(storySources.storyId, id));
+    const res = await db.delete(stories).where(eq(stories.id, id)).returning({ id: stories.id });
+    return res.length > 0;
+  }
+
+  async logEdit(edit: Omit<StoryEdit, "id">): Promise<StoryEdit> {
+    const rows = await db.insert(storyEdits).values(edit).returning();
+    return rowToStoryEdit(rows[0]);
+  }
+
+  async listEdits(limit = 100): Promise<StoryEdit[]> {
+    const rows = await db.select().from(storyEdits).orderBy(desc(storyEdits.editedAt)).limit(limit);
+    return rows.map(rowToStoryEdit);
+  }
+
+  async recentEditPatterns(days = 7): Promise<Array<{ sourceName: string; field: string; count: number }>> {
+    const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    const rows = await db.execute(sql`
+      SELECT source_name, field, COUNT(*)::int AS c FROM story_edits
+      WHERE edited_at > ${cutoff} AND source_name IS NOT NULL
+      GROUP BY source_name, field
+      ORDER BY c DESC
+      LIMIT 20
+    `);
+    return (rows as any[]).map((r) => ({ sourceName: r.source_name, field: r.field, count: r.c }));
+  }
+
+  // ----- Classification rules -----
+  async listClassificationRules(): Promise<ClassificationRule[]> {
+    const rows = await db.select().from(classificationRules).orderBy(desc(classificationRules.priority), asc(classificationRules.id));
+    return rows.map(rowToRule);
+  }
+
+  async createClassificationRule(input: Omit<ClassificationRule, "id" | "hitCount">): Promise<ClassificationRule> {
+    const rows = await db.insert(classificationRules).values({
+      matchField: input.matchField,
+      pattern: input.pattern,
+      action: input.action,
+      value: input.value,
+      priority: input.priority ?? 0,
+      notes: input.notes ?? null,
+      createdAt: input.createdAt,
+      createdBy: input.createdBy ?? "admin",
+      active: input.active === false ? false : true,
+    }).returning();
+    return rowToRule(rows[0]);
+  }
+
+  async updateClassificationRule(id: number, patch: Partial<Omit<ClassificationRule, "id">>): Promise<ClassificationRule | null> {
+    const set: Record<string, any> = {};
+    const keys: Array<keyof ClassificationRule> = ["matchField", "pattern", "action", "value", "priority", "notes", "active"];
+    for (const k of keys) if (k in patch) set[k as string] = (patch as any)[k];
+    if (Object.keys(set).length === 0) {
+      const rows = await db.select().from(classificationRules).where(eq(classificationRules.id, id)).limit(1);
+      return rows[0] ? rowToRule(rows[0]) : null;
+    }
+    const rows = await db.update(classificationRules).set(set).where(eq(classificationRules.id, id)).returning();
+    return rows[0] ? rowToRule(rows[0]) : null;
+  }
+
+  async deleteClassificationRule(id: number): Promise<boolean> {
+    const res = await db.delete(classificationRules).where(eq(classificationRules.id, id)).returning({ id: classificationRules.id });
+    return res.length > 0;
+  }
+
+  async incrementRuleHitCount(id: number): Promise<void> {
+    await db.execute(sql`UPDATE classification_rules SET hit_count = hit_count + 1 WHERE id = ${id}`);
+  }
+
+  // ----- History stories (long-form pool, also serves People desk) -----
+  async listHistoryStories(): Promise<HistoryStory[]> {
+    const rows = await db.select().from(historyStories).where(eq(historyStories.isVisible, true)).orderBy(desc(historyStories.lastBumpedAt));
+    return rows.map(rowToHistoryStory);
+  }
+
+  async listAllHistoryStoriesForDesk(desk: string): Promise<HistoryStory[]> {
+    const rows = await db.select().from(historyStories).where(eq(historyStories.desk, desk)).orderBy(desc(historyStories.publishedAt));
+    return rows.map(rowToHistoryStory);
+  }
+
+  async createHistoryStory(input: InsertHistoryStory): Promise<HistoryStory> {
+    const rows = await db.insert(historyStories).values({
+      headline: input.headline,
+      summary: input.summary,
+      sourceUrl: input.sourceUrl ?? null,
+      desk: (input as any).desk ?? "history",
+      kind: (input as any).kind ?? "history",
+      publishedAt: input.publishedAt,
+      lastBumpedAt: input.lastBumpedAt,
+      isVisible: true,
+    }).returning();
+    return rowToHistoryStory(rows[0]);
+  }
+
+  async updateHistoryStory(id: number, patch: Partial<InsertHistoryStory>): Promise<HistoryStory | null> {
+    const set: Record<string, any> = {};
+    const keys: Array<keyof InsertHistoryStory> = ["headline", "summary", "sourceUrl", "desk", "kind", "lastBumpedAt"];
+    for (const k of keys) if (k in patch) set[k as string] = (patch as any)[k];
+    if ("isVisible" in (patch as any)) set.isVisible = (patch as any).isVisible;
+    if (Object.keys(set).length === 0) {
+      const rows = await db.select().from(historyStories).where(eq(historyStories.id, id)).limit(1);
+      return rows[0] ? rowToHistoryStory(rows[0]) : null;
+    }
+    const rows = await db.update(historyStories).set(set).where(eq(historyStories.id, id)).returning();
+    return rows[0] ? rowToHistoryStory(rows[0]) : null;
+  }
+
+  async setHistoryVisibility(ids: number[], visible: boolean): Promise<void> {
+    if (!ids.length) return;
+    await db.update(historyStories).set({ isVisible: visible }).where(inArray(historyStories.id, ids));
+  }
+
+  async markHistoryShownNow(ids: number[]): Promise<void> {
+    if (!ids.length) return;
+    const now = new Date().toISOString();
+    await db.update(historyStories).set({ lastShownAt: now }).where(inArray(historyStories.id, ids));
+  }
+
+  async bumpOldestHistoryStory(): Promise<void> {
+    const oldest = await db.select({ id: historyStories.id }).from(historyStories).orderBy(asc(historyStories.lastBumpedAt)).limit(1);
+    if (!oldest[0]) return;
+    const now = new Date().toISOString();
+    await db.update(historyStories).set({ lastBumpedAt: now }).where(eq(historyStories.id, oldest[0].id));
+  }
+
+  async countHistoryStories(): Promise<number> {
+    const res = await db.select({ c: sql<number>`count(*)::int` }).from(historyStories);
+    return res[0]?.c ?? 0;
+  }
+
+  async deleteHistoryStoryById(id: number): Promise<void> {
+    await db.delete(historyStories).where(eq(historyStories.id, id));
+  }
+
+  // ----- Job posts -----
+  async listJobPosts(state?: JobPostState): Promise<JobPost[]> {
+    const rows = state
+      ? await db.select().from(jobPosts).where(eq(jobPosts.state, state)).orderBy(desc(jobPosts.submittedAt))
+      : await db.select().from(jobPosts).orderBy(desc(jobPosts.submittedAt));
+    return rows.map(rowToJobPost);
+  }
+
+  async getJobPost(id: number): Promise<JobPost | null> {
+    const rows = await db.select().from(jobPosts).where(eq(jobPosts.id, id)).limit(1);
+    return rows[0] ? rowToJobPost(rows[0]) : null;
+  }
+
+  async createJobPost(input: InsertJobPost): Promise<JobPost> {
+    const submittedAt = new Date().toISOString();
+    const rows = await db.insert(jobPosts).values({
+      title: input.title.trim(),
+      business: input.business.trim(),
+      address: input.address?.trim() || null,
+      phone: input.phone?.trim() || null,
+      pay: input.pay?.trim() || null,
+      body: input.body.trim(),
+      submitterEmail: input.submitterEmail?.trim() || null,
+      state: "pending" as JobPostState,
+      submittedAt,
+    }).returning();
+    return rowToJobPost(rows[0]);
+  }
+
+  async setJobPostState(id: number, state: JobPostState): Promise<JobPost | null> {
+    const set: Record<string, any> = { state };
+    if (state === "approved") set.approvedAt = new Date().toISOString();
+    await db.update(jobPosts).set(set).where(eq(jobPosts.id, id));
+    return this.getJobPost(id);
+  }
+
+  async deleteJobPost(id: number): Promise<boolean> {
+    const res = await db.delete(jobPosts).where(eq(jobPosts.id, id)).returning({ id: jobPosts.id });
+    return res.length > 0;
+  }
+
+  async countJobPosts(state?: JobPostState): Promise<number> {
+    const q = state
+      ? await db.select({ c: sql<number>`count(*)::int` }).from(jobPosts).where(eq(jobPosts.state, state))
+      : await db.select({ c: sql<number>`count(*)::int` }).from(jobPosts);
+    return q[0]?.c ?? 0;
+  }
+
+  // ----- Meta key/value -----
+  async getMeta(key: string): Promise<string | null> {
+    const rows = await db.select().from(meta).where(eq(meta.key, key)).limit(1);
+    return rows[0]?.value ?? null;
+  }
+
+  async setMeta(key: string, value: string): Promise<void> {
+    await db.execute(sql`INSERT INTO meta (key, value) VALUES (${key}, ${value}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
+  }
 }
 
 export const storage = new DatabaseStorage();

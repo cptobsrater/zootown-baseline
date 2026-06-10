@@ -12,7 +12,7 @@ import { issueToken, revokeToken, requireAdmin, verifyPassword } from "./auth";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // ----- Stories feed -----
-  app.get("/api/stories", (req, res) => {
+  app.get("/api/stories", async (req, res) => {
     const schema = z.object({
       desk: z.string().optional(),
       q: z.string().optional(),
@@ -22,32 +22,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
     const parsed = schema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const result = storage.listStories(parsed.data);
+    const result = await storage.listStories(parsed.data);
     // Annotate each story with its source count so feed cards can show "+N sources".
-    const items = result.items.map((s) => ({ ...s, sourceCount: storage.countStorySources(s.id) }));
+    const items = await Promise.all(
+      result.items.map(async (s) => ({ ...s, sourceCount: await storage.countStorySources(s.id) })),
+    );
     res.json({ ...result, items });
   });
 
-  app.get("/api/stories/:id", (req, res) => {
+  app.get("/api/stories/:id", async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
-    const story = storage.getStory(id);
+    const story = await storage.getStory(id);
     if (!story) return res.status(404).json({ error: "Not found" });
-    const sources = storage.listStorySources(id);
+    const sources = await storage.listStorySources(id);
     res.json({ ...story, sources });
   });
 
-  app.patch("/api/stories/:id/mod", requireAdmin, (req, res) => {
+  app.patch("/api/stories/:id/mod", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     const schema = z.object({ modState: z.enum(["draft", "approved", "rejected"]) });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const before = storage.getStory(id);
+    const before = await storage.getStory(id);
     if (!before) return res.status(404).json({ error: "Not found" });
-    const updated = storage.updateStoryModState(id, parsed.data.modState);
+    const updated = await storage.updateStoryModState(id, parsed.data.modState);
     if (!updated) return res.status(404).json({ error: "Not found" });
     if (before.modState !== parsed.data.modState) {
-      storage.logEdit({
+      await storage.logEdit({
         storyId: id,
         field: "modState",
         beforeValue: before.modState,
@@ -58,8 +60,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       try {
         const delta = parsed.data.modState === "approved" ? 2 : parsed.data.modState === "rejected" ? -3 : 0;
         if (delta !== 0) {
-          const src = storage.listSources().find((s) => s.name === before.sourceName);
-          if (src) storage.bumpSourceTrust(src.id, delta);
+          const src = (await storage.listSources()).find((s) => s.name === before.sourceName);
+          if (src) await storage.bumpSourceTrust(src.id, delta);
         }
       } catch {}
     }
@@ -98,21 +100,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     sourceUrl: z.string().url().max(800).optional(),
   });
 
-  app.patch("/api/admin/stories/:id", requireAdmin, (req, res) => {
+  app.patch("/api/admin/stories/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
     const parsed = editStorySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const before = storage.getStory(id);
+    const before = await storage.getStory(id);
     if (!before) return res.status(404).json({ error: "Not found" });
-    const updated = storage.updateStoryFields(id, parsed.data);
+    const updated = await storage.updateStoryFields(id, parsed.data);
     if (!updated) return res.status(404).json({ error: "Not found" });
     const editedAt = new Date().toISOString();
     for (const key of ["headline", "summary", "desk", "sourceUrl"] as const) {
       const beforeVal = (before as any)[key] ?? null;
       const afterVal = (parsed.data as any)[key];
       if (afterVal !== undefined && afterVal !== beforeVal) {
-        storage.logEdit({
+        await storage.logEdit({
           storyId: id,
           field: key,
           beforeValue: beforeVal == null ? null : String(beforeVal),
@@ -125,14 +127,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(updated);
   });
 
-  app.delete("/api/admin/stories/:id", requireAdmin, (req, res) => {
+  app.delete("/api/admin/stories/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
-    const before = storage.getStory(id);
+    const before = await storage.getStory(id);
     if (!before) return res.status(404).json({ error: "Not found" });
-    const ok = storage.deleteStory(id);
+    const ok = await storage.deleteStory(id);
     if (!ok) return res.status(404).json({ error: "Not found" });
-    storage.logEdit({
+    await storage.logEdit({
       storyId: id,
       field: "deleted",
       beforeValue: before.headline,
@@ -141,15 +143,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       editedAt: new Date().toISOString(),
     });
     try {
-      const src = storage.listSources().find((s) => s.name === before.sourceName);
-      if (src) storage.bumpSourceTrust(src.id, -4);
+      const src = (await storage.listSources()).find((s) => s.name === before.sourceName);
+      if (src) await storage.bumpSourceTrust(src.id, -4);
     } catch {}
     res.json({ ok: true });
   });
 
   // ----- Classification rules CRUD -----
-  app.get("/api/admin/rules", requireAdmin, (_req, res) => {
-    res.json({ rules: storage.listClassificationRules() });
+  app.get("/api/admin/rules", requireAdmin, async (_req, res) => {
+    res.json({ rules: await storage.listClassificationRules() });
   });
   const ruleInputSchema = z.object({
     matchField: z.enum(["headline", "summary", "text", "source"]),
@@ -163,7 +165,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/admin/rules", requireAdmin, async (req, res) => {
     const parsed = ruleInputSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const created = storage.createClassificationRule({
+    const created = await storage.createClassificationRule({
       matchField: parsed.data.matchField, pattern: parsed.data.pattern, action: parsed.data.action,
       value: parsed.data.value, priority: parsed.data.priority ?? 0, notes: parsed.data.notes ?? null,
       active: parsed.data.active ?? true, createdAt: new Date().toISOString(), createdBy: "admin",
@@ -177,7 +179,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
     const parsed = ruleInputSchema.partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const updated = storage.updateClassificationRule(id, parsed.data as any);
+    const updated = await storage.updateClassificationRule(id, parsed.data as any);
     if (!updated) return res.status(404).json({ error: "Not found" });
     const { invalidateRuleCache } = await import("./ingest/rules");
     invalidateRuleCache();
@@ -186,7 +188,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.delete("/api/admin/rules/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
-    const ok = storage.deleteClassificationRule(id);
+    const ok = await storage.deleteClassificationRule(id);
     if (!ok) return res.status(404).json({ error: "Not found" });
     const { invalidateRuleCache } = await import("./ingest/rules");
     invalidateRuleCache();
@@ -194,11 +196,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // Edit log + patterns (for the "learning from manual edits" panel)
-  app.get("/api/admin/edits", requireAdmin, (req, res) => {
+  app.get("/api/admin/edits", requireAdmin, async (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
     res.json({
-      edits: storage.listEdits(limit),
-      patterns: storage.recentEditPatterns(7),
+      edits: await storage.listEdits(limit),
+      patterns: await storage.recentEditPatterns(7),
     });
   });
 
@@ -215,11 +217,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     category: z.enum(SOURCE_CATEGORIES),
   });
 
-  app.post("/api/admin/sources", requireAdmin, (req, res) => {
+  app.post("/api/admin/sources", requireAdmin, async (req, res) => {
     const parsed = newSourceSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const d = parsed.data;
-    const created = storage.createSource({
+    const created = await storage.createSource({
       name: d.name,
       url: d.url,
       feedUrl: d.feedUrl && d.feedUrl.length > 0 ? d.feedUrl : null,
@@ -237,14 +239,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       lastCheckedAt: null,
       lastMode: null,
       lastError: null,
-    });
+    } as any);
     res.json(created);
   });
 
-  app.delete("/api/admin/sources/:id", requireAdmin, (req, res) => {
+  app.delete("/api/admin/sources/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
-    const ok = storage.deleteSource(id);
+    const ok = await storage.deleteSource(id);
     if (!ok) return res.status(404).json({ error: "Not found" });
     res.json({ ok: true });
   });
@@ -265,14 +267,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     platform: z.string().max(40).nullable().optional(),
     trustScore: z.number().int().min(0).max(100).optional(),
   });
-  app.patch("/api/admin/sources/:id", requireAdmin, (req, res) => {
+  app.patch("/api/admin/sources/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
     const parsed = patchSourceSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const updated = storage.updateSource(id, parsed.data as any);
+    const updated = await storage.updateSource(id, parsed.data as any);
     if (!updated) return res.status(404).json({ error: "Not found" });
-    storage.logEdit({
+    await storage.logEdit({
       storyId: 0, field: "source",
       beforeValue: String(id), afterValue: JSON.stringify(parsed.data),
       sourceName: updated.name, editedAt: new Date().toISOString(),
@@ -300,7 +302,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     let source: Source | undefined;
     if (parsed.data.sourceId) {
-      source = storage.getSource(parsed.data.sourceId);
+      source = await storage.getSource(parsed.data.sourceId);
       if (!source) return res.status(404).json({ error: "Source not found" });
     } else {
       const d = parsed.data;
@@ -316,6 +318,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         parserKey: d.parserKey ?? null,
         sourceType: d.sourceType,
         desks: JSON.stringify(d.desks),
+        categoryPriority: null,
         cadenceMinutes: 15,
         lastCheckedAt: null,
         lastStatus: "idle",
@@ -326,7 +329,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         category: d.category,
         handle: null,
         platform: null,
-      };
+        trustScore: 50,
+      } as Source;
     }
     try {
       let result;
@@ -363,18 +367,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ----- Events, sources, aggregates for right rail -----
-  app.get("/api/events", (req, res) => {
+  app.get("/api/events", async (req, res) => {
     const schema = z.object({
       limit: z.coerce.number().int().min(1).max(500).optional(),
     });
     const parsed = schema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    res.json(storage.listEvents(parsed.data.limit ?? 8));
+    res.json(await storage.listEvents(parsed.data.limit ?? 8));
   });
 
-  app.get("/api/sources", (_req, res) => {
-    const sources = storage.listSources();
-    const counts = storage.getPublishedCounts();
+  app.get("/api/sources", async (_req, res) => {
+    const sources = await storage.listSources();
+    const counts = await storage.getPublishedCounts();
     const enriched = sources.map((s) => ({
       ...s,
       publishedCount: counts.get(s.name.toLowerCase()) ?? 0,
@@ -382,12 +386,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(enriched);
   });
 
-  app.get("/api/trending-tags", (_req, res) => {
-    res.json(storage.getTrendingTags(10));
+  app.get("/api/trending-tags", async (_req, res) => {
+    res.json(await storage.getTrendingTags(10));
   });
 
-  app.get("/api/top-stories", (_req, res) => {
-    res.json(storage.getTopStories(6));
+  app.get("/api/top-stories", async (_req, res) => {
+    res.json(await storage.getTopStories(6));
   });
 
   // ----- Ingestion pipeline -----
@@ -401,16 +405,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/ingest/run/:sourceId", requireAdmin, async (req, res) => {
     const id = Number(req.params.sourceId);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid sourceId" });
-    const source = storage.getSource(id);
+    const source = await storage.getSource(id);
     if (!source) return res.status(404).json({ error: "Source not found" });
     const summary = await ingestSource(source);
     res.json({ summary });
   });
 
   // Ingest run log (admin panel)
-  app.get("/api/ingest/runs", (req, res) => {
+  app.get("/api/ingest/runs", async (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 40), 100);
-    res.json(storage.listIngestRuns(limit));
+    res.json(await storage.listIngestRuns(limit));
   });
 
   // ----- Weather (public NWS API, no key) -----
@@ -515,12 +519,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     submitterEmail: z.string().trim().email().optional().or(z.literal("")),
   });
 
-  app.get("/api/jobs", (_req, res) => {
-    const jobs = storage.listJobPosts("approved");
+  app.get("/api/jobs", async (_req, res) => {
+    const jobs = await storage.listJobPosts("approved");
     res.json({ jobs, fetchedAt: new Date().toISOString() });
   });
 
-  app.post("/api/jobs", (req, res) => {
+  app.post("/api/jobs", async (req, res) => {
     const parsed = jobPostSubmitSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.flatten() });
@@ -530,7 +534,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (wordCount > 1000) {
       return res.status(400).json({ error: { fieldErrors: { body: [`Please keep the description under 1000 words (you have ${wordCount}).`] } } });
     }
-    const job = storage.createJobPost({
+    const job = await storage.createJobPost({
       title: parsed.data.title,
       business: parsed.data.business,
       address: parsed.data.address || null,
@@ -543,38 +547,38 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // Admin endpoints for moderation
-  app.get("/api/admin/jobs", requireAdmin, (req, res) => {
+  app.get("/api/admin/jobs", requireAdmin, async (req, res) => {
     const state = (req.query.state as string | undefined) || undefined;
     if (state && state !== "pending" && state !== "approved" && state !== "rejected") {
       return res.status(400).json({ error: "invalid state" });
     }
-    const jobs = storage.listJobPosts(state as any);
+    const jobs = await storage.listJobPosts(state as any);
     res.json({
       jobs,
       counts: {
-        pending: storage.countJobPosts("pending"),
-        approved: storage.countJobPosts("approved"),
-        rejected: storage.countJobPosts("rejected"),
+        pending: await storage.countJobPosts("pending"),
+        approved: await storage.countJobPosts("approved"),
+        rejected: await storage.countJobPosts("rejected"),
       },
     });
   });
 
-  app.patch("/api/admin/jobs/:id", requireAdmin, (req, res) => {
+  app.patch("/api/admin/jobs/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid id" });
     const state = String(req.body?.state || "");
     if (state !== "pending" && state !== "approved" && state !== "rejected") {
       return res.status(400).json({ error: "invalid state" });
     }
-    const updated = storage.setJobPostState(id, state);
+    const updated = await storage.setJobPostState(id, state);
     if (!updated) return res.status(404).json({ error: "not found" });
     res.json(updated);
   });
 
-  app.delete("/api/admin/jobs/:id", requireAdmin, (req, res) => {
+  app.delete("/api/admin/jobs/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "invalid id" });
-    const ok = storage.deleteJobPost(id);
+    const ok = await storage.deleteJobPost(id);
     if (!ok) return res.status(404).json({ error: "not found" });
     res.json({ ok: true });
   });
@@ -583,11 +587,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // The front end polls this every 30s. It now reflects real ingestion activity
   // — the timestamp and count from the most recent ingest_runs row — rather than
   // the old "latest publishedAt" hack.
-  app.get("/api/pulse", (_req, res) => {
-    const runs = storage.listIngestRuns(12);
+  app.get("/api/pulse", async (_req, res) => {
+    const runs = await storage.listIngestRuns(12);
     const lastRun = runs[0];
     const totalAddedRecently = runs.reduce((n, r) => n + r.added, 0);
-    const top = storage.listStories({ desk: "all", limit: 1, modState: "approved" });
+    const top = await storage.listStories({ desk: "all", limit: 1, modState: "approved" });
     res.json({
       latestPublishedAt: top.items[0]?.publishedAt ?? null,
       total: top.total,
@@ -604,9 +608,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 
   // ----- History stories -----
-  app.get("/api/history", (req, res) => {
+  app.get("/api/history", async (req, res) => {
     const desk = typeof req.query.desk === "string" ? req.query.desk : null;
-    const all = storage.listHistoryStories();
+    const all = await storage.listHistoryStories();
     if (!desk) return res.json(all);
     res.json(all.filter((h) => (h.desk ?? "history") === desk));
   });
@@ -622,7 +626,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const { addHistoryStory } = await import("./history");
-    const story = addHistoryStory(
+    const story = await addHistoryStory(
       parsed.data.headline,
       parsed.data.summary,
       parsed.data.sourceUrl || undefined,
@@ -633,9 +637,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // Admin: full pool listing (includes hidden rows), with desk filter.
-  app.get("/api/admin/history", requireAdmin, (req, res) => {
+  app.get("/api/admin/history", requireAdmin, async (req, res) => {
     const desk = typeof req.query.desk === "string" ? req.query.desk : "history";
-    res.json(storage.listAllHistoryStoriesForDesk(desk));
+    res.json(await storage.listAllHistoryStoriesForDesk(desk));
   });
 
   // Admin: edit one long-form article.
@@ -647,14 +651,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     kind: z.enum(["history", "profile", "obituary"]).optional(),
     isVisible: z.boolean().optional(),
   });
-  app.patch("/api/admin/history/:id", requireAdmin, (req, res) => {
+  app.patch("/api/admin/history/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
     const parsed = patchHistorySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const updated = storage.updateHistoryStory(id, parsed.data as any);
+    const updated = await storage.updateHistoryStory(id, parsed.data as any);
     if (!updated) return res.status(404).json({ error: "Not found" });
-    storage.logEdit({
+    await storage.logEdit({
       storyId: 0, field: "history",
       beforeValue: String(id), afterValue: JSON.stringify(parsed.data),
       sourceName: "ZooTown", editedAt: new Date().toISOString(),
@@ -663,11 +667,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // Admin: delete a long-form article.
-  app.delete("/api/admin/history/:id", requireAdmin, (req, res) => {
+  app.delete("/api/admin/history/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
-    storage.deleteHistoryStoryById(id);
-    storage.logEdit({
+    await storage.deleteHistoryStoryById(id);
+    await storage.logEdit({
       storyId: 0, field: "history_deleted",
       beforeValue: String(id), afterValue: null,
       sourceName: "ZooTown", editedAt: new Date().toISOString(),

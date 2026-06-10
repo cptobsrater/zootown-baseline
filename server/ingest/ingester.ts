@@ -114,12 +114,12 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
       // Calendar-category sources route to the events table instead of stories.
       if (isCalendar) {
         const canonicalEv = canonicalizeUrl(item.url);
-        if (storage.findEventByUrl(canonicalEv)) {
+        if (await storage.findEventByUrl(canonicalEv)) {
           duplicates++;
           continue;
         }
         const startsAt = parseEventDate(item.summary, item.publishedAt) ?? new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
-        storage.createEvent({
+        await storage.createEvent({
           title: item.title.slice(0, 220),
           venue: extractVenue(item.summary) ?? source.name,
           startsAt,
@@ -144,7 +144,7 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
       const canonical = canonicalizeUrl(item.url);
 
       // 1) Exact canonical URL dedupe
-      const existing = storage.findStoryByCanonicalUrl(canonical);
+      const existing = await storage.findStoryByCanonicalUrl(canonical);
       if (existing) {
         duplicates++;
         continue;
@@ -152,9 +152,9 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
 
       // 2) Title-similarity clustering against recent approved stories.
       //    If we find a candidate AND it's from a different source, attach as an extra source.
-      const cluster = storage.findClusterCandidate(item.title, CLUSTER_WINDOW_MS);
+      const cluster = await storage.findClusterCandidate(item.title, CLUSTER_WINDOW_MS);
       if (cluster && cluster.sourceName !== source.name) {
-        storage.attachStorySource(cluster.id, {
+        await storage.attachStorySource(cluster.id, {
           sourceName: source.name,
           sourceUrl: canonical,
           sourceType: source.sourceType,
@@ -165,12 +165,12 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
 
       // 3) Insert as a new story.
       const baseInsert = toInsertStory({ ...item, url: canonical }, source);
-      const { story: insert, hits: ruleHits } = applyClassificationRules(baseInsert, source);
-      const story = storage.createStory(insert);
-      if (ruleHits.length) bumpHitCounts(ruleHits);
+      const { story: insert, hits: ruleHits } = await applyClassificationRules(baseInsert, source);
+      const story = await storage.createStory(insert);
+      if (ruleHits.length) await bumpHitCounts(ruleHits);
       // Seed the join table with the primary source so the drawer can uniformly
       // enumerate sources later (even for single-source stories we know about one).
-      storage.attachStorySource(story.id, {
+      await storage.attachStorySource(story.id, {
         sourceName: source.name,
         sourceUrl: canonical,
         sourceType: source.sourceType,
@@ -186,7 +186,7 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
 
   // Update source health + write the run log.
   const status = errors > 0 ? "error" : fetched > 0 ? "ok" : "stale";
-  storage.updateSourceHealth(source.id, {
+  await storage.updateSourceHealth(source.id, {
     lastCheckedAt: finishedAt,
     lastStatus: status,
     lastMode: mode,
@@ -194,7 +194,7 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
     lastItems: added,
   });
 
-  storage.recordIngestRun({
+  await storage.recordIngestRun({
     sourceId: source.id,
     sourceName: source.name,
     startedAt,
@@ -225,7 +225,7 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
 }
 
 export async function ingestAll(): Promise<RunSummary[]> {
-  const sources = storage.listSources().filter((s) => s.active);
+  const sources = (await storage.listSources()).filter((s) => s.active);
   const summaries: RunSummary[] = [];
   // Run serially so the SQLite writes stay predictable; the total count is small.
   for (const s of sources) {
@@ -268,7 +268,7 @@ function dueNow(s: Source, now: number): boolean {
 
 async function tick() {
   const now = Date.now();
-  const due = storage.listSources().filter((s) => dueNow(s, now));
+  const due = (await storage.listSources()).filter((s) => dueNow(s, now));
   for (const s of due) {
     try {
       await ingestSource(s);

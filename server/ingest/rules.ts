@@ -12,10 +12,11 @@ export function invalidateRuleCache() {
   cacheLoadedAt = 0;
 }
 
-function getRules(): ClassificationRule[] {
+async function getRules(): Promise<ClassificationRule[]> {
   const now = Date.now();
   if (cache && now - cacheLoadedAt < CACHE_TTL_MS) return cache;
-  cache = storage.listClassificationRules().filter((r) => r.active);
+  const rows = await storage.listClassificationRules();
+  cache = rows.filter((r) => r.active);
   cacheLoadedAt = now;
   return cache;
 }
@@ -44,11 +45,11 @@ function matches(rule: ClassificationRule, story: InsertStory, source: Source | 
   return hay.includes(pat.toLowerCase());
 }
 
-export function applyClassificationRules(
+export async function applyClassificationRules(
   story: InsertStory,
   source: Source | null,
-): { story: InsertStory; hits: number[] } {
-  const rules = getRules();
+): Promise<{ story: InsertStory; hits: number[] }> {
+  const rules = await getRules();
   if (rules.length === 0) return { story, hits: [] };
   const next: InsertStory = { ...story };
   const hits: number[] = [];
@@ -72,8 +73,8 @@ export function applyClassificationRules(
   return { story: next, hits };
 }
 
-export function bumpHitCounts(hits: number[]) {
+export async function bumpHitCounts(hits: number[]) {
   for (const id of hits) {
-    try { storage.incrementRuleHitCount(id); } catch {}
+    try { await storage.incrementRuleHitCount(id); } catch {}
   }
 }
