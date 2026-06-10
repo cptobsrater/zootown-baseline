@@ -5,7 +5,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { startScheduler } from "./ingest/ingester";
-import { seedHistoryIfEmpty, startHistoryRotationScheduler } from "./history";
+import { seedHistoryIfEmpty, startLongFormScheduler } from "./history";
 
 const app = express();
 const httpServer = createServer(app);
@@ -126,7 +126,7 @@ process.on("unhandledRejection", (reason) => {
       }
       try {
         seedHistoryIfEmpty();
-        startHistoryRotationScheduler();
+        startLongFormScheduler();
         log("history pool initialized", "history");
       } catch (err) {
         console.error("[boot] history init failed (non-fatal):", err);

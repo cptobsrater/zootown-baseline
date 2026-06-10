@@ -632,5 +632,48 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(story);
   });
 
+  // Admin: full pool listing (includes hidden rows), with desk filter.
+  app.get("/api/admin/history", requireAdmin, (req, res) => {
+    const desk = typeof req.query.desk === "string" ? req.query.desk : "history";
+    res.json(storage.listAllHistoryStoriesForDesk(desk));
+  });
+
+  // Admin: edit one long-form article.
+  const patchHistorySchema = z.object({
+    headline: z.string().min(2).max(400).optional(),
+    summary: z.string().min(10).max(50000).optional(),
+    sourceUrl: z.string().url().max(800).nullable().optional(),
+    desk: z.enum(["history", "people"]).optional(),
+    kind: z.enum(["history", "profile", "obituary"]).optional(),
+    isVisible: z.boolean().optional(),
+  });
+  app.patch("/api/admin/history/:id", requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const parsed = patchHistorySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const updated = storage.updateHistoryStory(id, parsed.data as any);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    storage.logEdit({
+      storyId: 0, field: "history",
+      beforeValue: String(id), afterValue: JSON.stringify(parsed.data),
+      sourceName: "ZooTown", editedAt: new Date().toISOString(),
+    });
+    res.json(updated);
+  });
+
+  // Admin: delete a long-form article.
+  app.delete("/api/admin/history/:id", requireAdmin, (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    storage.deleteHistoryStoryById(id);
+    storage.logEdit({
+      storyId: 0, field: "history_deleted",
+      beforeValue: String(id), afterValue: null,
+      sourceName: "ZooTown", editedAt: new Date().toISOString(),
+    });
+    res.json({ ok: true });
+  });
+
   return httpServer;
 }

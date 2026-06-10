@@ -135,12 +135,15 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
     "new treatment", "fda approval", "fda approves", "gene therapy",
   ], 2);
 
-  // People — local profiles
+  // People — narrow: only obituaries and stories explicitly about a specific
+  // local person (profile/interview/Q&A). Generic mentions of "local artist"
+  // do not qualify; those should land on City or Business instead.
   hit("people", [
-    "profile of", "in conversation", "q&a with", "meet missoula", "born in missoula",
-    "grew up in missoula", "longtime missoula resident", "local artist", "local entrepreneur",
-    "local leader", "community leader", "civic leader",
-  ]);
+    "obituary", "obituaries", "in memoriam", "passed away", "funeral service",
+    "died at", "died this week", "died monday", "died tuesday", "died wednesday",
+    "died thursday", "died friday", "died saturday", "died sunday",
+    "profile of", "q&a with", "in conversation with", "meet missoula\u2019s",
+  ], 2);
 
   // Events — local events
   hit("events", [

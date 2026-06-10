@@ -96,6 +96,10 @@ export const historyStories = sqliteTable("history_stories", {
   kind: text("kind").notNull().default("history"), // 'history' | 'profile' | 'obituary'
   publishedAt: text("published_at").notNull(),
   lastBumpedAt: text("last_bumped_at").notNull(),
+  // Rotation: DB stores everything; only is_visible=true rows show on the public site.
+  // A scheduled job picks ~100 per desk and flips this flag.
+  isVisible: integer("is_visible", { mode: "boolean" }).notNull().default(true),
+  lastShownAt: text("last_shown_at"), // ISO — when last rotated into visible set
 });
 
 export const insertHistoryStorySchema = createInsertSchema(historyStories).omit({ id: true });

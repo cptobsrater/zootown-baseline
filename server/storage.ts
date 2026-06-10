@@ -131,7 +131,9 @@ CREATE TABLE IF NOT EXISTS history_stories (
   desk TEXT NOT NULL DEFAULT 'history',
   kind TEXT NOT NULL DEFAULT 'history',
   published_at TEXT NOT NULL,
-  last_bumped_at TEXT NOT NULL
+  last_bumped_at TEXT NOT NULL,
+  is_visible INTEGER NOT NULL DEFAULT 1,
+  last_shown_at TEXT
 );
 CREATE TABLE IF NOT EXISTS job_posts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -282,6 +284,8 @@ function ensureHistoryColumns() {
   const names = new Set(cols.map((c) => c.name));
   if (!names.has("desk")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN desk TEXT NOT NULL DEFAULT 'history'`);
   if (!names.has("kind")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN kind TEXT NOT NULL DEFAULT 'history'`);
+  if (!names.has("is_visible")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN is_visible INTEGER NOT NULL DEFAULT 1`);
+  if (!names.has("last_shown_at")) sqlite.exec(`ALTER TABLE history_stories ADD COLUMN last_shown_at TEXT`);
 }
 ensureHistoryColumns();
 
@@ -468,7 +472,11 @@ export interface IStorage {
   incrementRuleHitCount(id: number): void;
   // History stories
   listHistoryStories(): HistoryStory[];
+  listAllHistoryStoriesForDesk(desk: string): HistoryStory[];
   createHistoryStory(input: InsertHistoryStory): HistoryStory;
+  updateHistoryStory(id: number, patch: Partial<InsertHistoryStory>): HistoryStory | null;
+  setHistoryVisibility(ids: number[], visible: boolean): void;
+  markHistoryShownNow(ids: number[]): void;
   bumpOldestHistoryStory(): void;
   countHistoryStories(): number;
   deleteHistoryStoryById(id: number): void;
@@ -890,17 +898,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   // History stories
+  // Public-facing list: only visible rows. Admin uses listAllHistoryStoriesForDesk for full pool.
   listHistoryStories(): HistoryStory[] {
     const rows = sqlite
-      .prepare(`SELECT * FROM history_stories ORDER BY last_bumped_at DESC`)
+      .prepare(`SELECT * FROM history_stories WHERE is_visible = 1 ORDER BY last_bumped_at DESC`)
       .all() as any[];
+    return rows.map(rowToHistoryStory);
+  }
+
+  listAllHistoryStoriesForDesk(desk: string): HistoryStory[] {
+    const rows = sqlite
+      .prepare(`SELECT * FROM history_stories WHERE desk = ? ORDER BY published_at DESC`)
+      .all(desk) as any[];
     return rows.map(rowToHistoryStory);
   }
 
   createHistoryStory(input: InsertHistoryStory): HistoryStory {
     const res = sqlite
       .prepare(
-        `INSERT INTO history_stories (headline, summary, source_url, desk, kind, published_at, last_bumped_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO history_stories (headline, summary, source_url, desk, kind, published_at, last_bumped_at, is_visible) VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       )
       .run(
         input.headline, input.summary, input.sourceUrl ?? null,
@@ -909,6 +925,50 @@ export class DatabaseStorage implements IStorage {
       );
     const row = sqlite.prepare(`SELECT * FROM history_stories WHERE id = ?`).get(Number(res.lastInsertRowid)) as any;
     return rowToHistoryStory(row);
+  }
+
+  updateHistoryStory(id: number, patch: Partial<InsertHistoryStory>): HistoryStory | null {
+    const cols: Array<[keyof InsertHistoryStory | "isVisible", string]> = [
+      ["headline", "headline"],
+      ["summary", "summary"],
+      ["sourceUrl", "source_url"],
+      ["desk", "desk"],
+      ["kind", "kind"],
+      ["isVisible" as any, "is_visible"],
+      ["lastBumpedAt", "last_bumped_at"],
+    ];
+    const sets: string[] = [];
+    const vals: any[] = [];
+    for (const [key, col] of cols) {
+      if (key in patch) {
+        sets.push(`${col} = ?`);
+        let v: any = (patch as any)[key];
+        if (col === "is_visible" && typeof v === "boolean") v = v ? 1 : 0;
+        vals.push(v);
+      }
+    }
+    if (sets.length === 0) {
+      const row = sqlite.prepare(`SELECT * FROM history_stories WHERE id = ?`).get(id) as any;
+      return row ? rowToHistoryStory(row) : null;
+    }
+    vals.push(id);
+    const res = sqlite.prepare(`UPDATE history_stories SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+    if (res.changes === 0) return null;
+    const row = sqlite.prepare(`SELECT * FROM history_stories WHERE id = ?`).get(id) as any;
+    return row ? rowToHistoryStory(row) : null;
+  }
+
+  setHistoryVisibility(ids: number[], visible: boolean): void {
+    if (!ids.length) return;
+    const placeholders = ids.map(() => "?").join(",");
+    sqlite.prepare(`UPDATE history_stories SET is_visible = ? WHERE id IN (${placeholders})`).run(visible ? 1 : 0, ...ids);
+  }
+
+  markHistoryShownNow(ids: number[]): void {
+    if (!ids.length) return;
+    const now = new Date().toISOString();
+    const placeholders = ids.map(() => "?").join(",");
+    sqlite.prepare(`UPDATE history_stories SET last_shown_at = ? WHERE id IN (${placeholders})`).run(now, ...ids);
   }
 
   bumpOldestHistoryStory(): void {
@@ -1112,6 +1172,8 @@ function rowToHistoryStory(r: any): HistoryStory {
     kind: r.kind ?? "history",
     publishedAt: r.published_at,
     lastBumpedAt: r.last_bumped_at,
+    isVisible: r.is_visible === 1 || r.is_visible === true || r.is_visible == null,
+    lastShownAt: r.last_shown_at ?? null,
   };
 }
 

@@ -1,63 +1,137 @@
 /**
- * History pool management:
- * - Seeds 10 history stories on first boot
- * - Weekly rotation: bumps the oldest lastBumpedAt to now
+ * Long-form pool management for History + People desks.
+ *
+ * Storage model:
+ * - DB holds an unlimited number of articles per desk.
+ * - Only `is_visible = true` rows surface on the public site.
+ * - A weekly rotation picks ~100 per desk into the visible window; the rest
+ *   stay in the DB and can be brought back next cycle (or by admin).
+ *
+ * Daily writer:
+ * - Every 24h, the writer produces ONE new article. It alternates between
+ *   the People desk and the History desk so the collection grows evenly.
+ * - All articles publish directly; admin can edit/delete from the backend.
  */
 import { storage } from "./storage";
 import { HISTORY_SEED } from "./history-seed";
+import { generateNextArticle } from "./writer";
 
-const HISTORY_POOL_SIZE = 10;
-const ROTATION_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const VISIBLE_WINDOW = 100;          // rotating display per desk
+const ROTATION_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;   // 7 days
 const ROTATION_META_KEY = "history_last_rotation";
-const CHECK_INTERVAL_MS = 60 * 60 * 1000; // check hourly
+const DAILY_WRITE_INTERVAL_MS = 24 * 60 * 60 * 1000;    // 1 day
+const DAILY_WRITE_META_KEY = "history_last_daily_write";
+const DAILY_DESK_META_KEY = "history_last_daily_desk";
+const CHECK_INTERVAL_MS = 60 * 60 * 1000; // hourly tick
 
+/** First-boot seed (history desk only — people desk starts empty and grows via writer). */
 export function seedHistoryIfEmpty() {
   const count = storage.countHistoryStories();
   if (count > 0) return;
-
-  console.log("[history] seeding 10 history stories…");
+  console.log("[history] seeding history desk from HISTORY_SEED…");
   const now = Date.now();
   for (let i = 0; i < HISTORY_SEED.length; i++) {
     const story = HISTORY_SEED[i];
-    // Stagger publishedAt: 1 story per day going back (HISTORY_SEED.length - i) days
     const publishedAt = new Date(now - (HISTORY_SEED.length - i) * 24 * 60 * 60 * 1000).toISOString();
-    const lastBumpedAt = publishedAt;
     storage.createHistoryStory({
       headline: story.headline,
       summary: story.summary,
       sourceUrl: story.sourceUrl ?? null,
+      desk: "history",
+      kind: "history",
       publishedAt,
-      lastBumpedAt,
-    });
+      lastBumpedAt: publishedAt,
+    } as any);
   }
-  console.log("[history] seeded 10 history stories");
+  console.log(`[history] seeded ${HISTORY_SEED.length} history articles`);
 }
 
-export function historyRotationTick() {
+/**
+ * Pick ~100 articles per desk to be visible. Strategy:
+ * 1. Always include the N most-recently-added.
+ * 2. Fill remaining slots with the least-recently-shown of the rest, so older
+ *    articles cycle back into view over time.
+ * Everything else gets is_visible=false until the next rotation.
+ */
+export function rotateVisibleWindow() {
+  for (const desk of ["history", "people"] as const) {
+    const all = storage.listAllHistoryStoriesForDesk(desk);
+    if (all.length <= VISIBLE_WINDOW) {
+      // Whole pool fits — everything visible.
+      storage.setHistoryVisibility(all.map((s) => s.id), true);
+      continue;
+    }
+    // Most-recently-added first half
+    const recent = [...all].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, Math.floor(VISIBLE_WINDOW / 2));
+    const recentIds = new Set(recent.map((s) => s.id));
+    // Fill the rest with the least-recently-shown
+    const remaining = all
+      .filter((s) => !recentIds.has(s.id))
+      .sort((a, b) => {
+        const at = a.lastShownAt ?? "";
+        const bt = b.lastShownAt ?? "";
+        return at.localeCompare(bt);
+      })
+      .slice(0, VISIBLE_WINDOW - recent.length);
+    const visibleIds = [...recent.map((s) => s.id), ...remaining.map((s) => s.id)];
+    const hiddenIds = all.filter((s) => !visibleIds.includes(s.id)).map((s) => s.id);
+    storage.setHistoryVisibility(visibleIds, true);
+    storage.setHistoryVisibility(hiddenIds, false);
+    storage.markHistoryShownNow(visibleIds);
+  }
+}
+
+export function rotationTick() {
   const lastRotation = storage.getMeta(ROTATION_META_KEY);
   const lastMs = lastRotation ? Date.parse(lastRotation) : 0;
   if (Date.now() - lastMs < ROTATION_INTERVAL_MS) return;
-
-  console.log("[history] rotating oldest story to top");
-  storage.bumpOldestHistoryStory();
+  console.log("[history] rotating visible window for history + people");
+  rotateVisibleWindow();
   storage.setMeta(ROTATION_META_KEY, new Date().toISOString());
 }
 
-export function startHistoryRotationScheduler() {
-  setTimeout(function tick() {
-    try {
-      historyRotationTick();
-    } catch (err) {
-      console.error("[history] rotation tick error:", err);
+/** One article per day, alternating People ↔ History. */
+export async function dailyWriteTick() {
+  const lastWrite = storage.getMeta(DAILY_WRITE_META_KEY);
+  const lastMs = lastWrite ? Date.parse(lastWrite) : 0;
+  if (Date.now() - lastMs < DAILY_WRITE_INTERVAL_MS) return;
+
+  const lastDesk = storage.getMeta(DAILY_DESK_META_KEY) ?? "history";
+  const nextDesk: "people" | "history" = lastDesk === "history" ? "people" : "history";
+
+  try {
+    const article = await generateNextArticle(nextDesk);
+    if (!article) {
+      console.warn(`[writer] generator returned null for ${nextDesk}`);
+      return;
     }
+    const now = new Date().toISOString();
+    storage.createHistoryStory({
+      headline: article.headline,
+      summary: article.body,
+      sourceUrl: article.sourceUrl ?? null,
+      desk: nextDesk,
+      kind: article.kind,
+      publishedAt: now,
+      lastBumpedAt: now,
+    } as any);
+    storage.setMeta(DAILY_WRITE_META_KEY, now);
+    storage.setMeta(DAILY_DESK_META_KEY, nextDesk);
+    console.log(`[writer] wrote daily ${nextDesk} article: "${article.headline}"`);
+  } catch (err) {
+    console.error("[writer] daily write error:", err);
+  }
+}
+
+export function startLongFormScheduler() {
+  setTimeout(async function tick() {
+    try { rotationTick(); } catch (err) { console.error("[history] rotation error:", err); }
+    try { await dailyWriteTick(); } catch (err) { console.error("[history] daily write error:", err); }
     setTimeout(tick, CHECK_INTERVAL_MS);
   }, CHECK_INTERVAL_MS);
 }
 
-/**
- * Add a new history story. If pool exceeds HISTORY_POOL_SIZE,
- * removes the one with the oldest publishedAt.
- */
+/** Admin-triggered single-shot publish (manual "Add to pool" form). */
 export function addHistoryStory(
   headline: string,
   summary: string,
@@ -66,7 +140,7 @@ export function addHistoryStory(
   kind: "history" | "profile" | "obituary" = "history",
 ) {
   const now = new Date().toISOString();
-  const story = storage.createHistoryStory({
+  return storage.createHistoryStory({
     headline,
     summary,
     sourceUrl: sourceUrl ?? null,
@@ -75,22 +149,4 @@ export function addHistoryStory(
     publishedAt: now,
     lastBumpedAt: now,
   } as any);
-
-  // Trim pool if over max — remove oldest by publishedAt (not the new one)
-  const all = storage.listHistoryStories().sort((a, b) => a.publishedAt.localeCompare(b.publishedAt));
-  if (all.length > HISTORY_POOL_SIZE) {
-    const oldest = all[0];
-    if (oldest && oldest.id !== story.id) {
-      // Use storage sqlite directly
-      const { deleteHistoryStory } = storage as any;
-      if (typeof deleteHistoryStory === "function") {
-        deleteHistoryStory(oldest.id);
-      } else {
-        // Fallback: use the internal sqlite reference via a direct method
-        (storage as any).deleteHistoryStoryById?.(oldest.id);
-      }
-    }
-  }
-
-  return story;
 }
