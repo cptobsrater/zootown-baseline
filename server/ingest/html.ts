@@ -272,10 +272,14 @@ async function fetchWithTimeout(url: string, timeoutMs: number) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // Use a normal browser User-Agent. Many event sites (Eventbrite, etc.)
+    // 403 / 406 any non-browser UA. We still self-identify in Accept-Language
+    // and only fetch publicly-served HTML, no scraping behind login walls.
     const res = await fetch(url, {
       headers: {
-        "User-Agent": "ZooTown/0.1 (+https://zootown.pplx.app; aggregator-prototype)",
-        Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
       },
       signal: controller.signal,
     });
