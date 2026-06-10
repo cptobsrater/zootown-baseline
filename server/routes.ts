@@ -551,23 +551,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let low: number | null = null;
       let alerts: Array<{ event: string; severity: string }> = [];
       if (observationStationsUrl) {
+        // NWS stations frequently report null temperature on their "latest"
+        // observation, especially small rural stations. Walk through the
+        // first few stations until we find one with a real reading.
         const stations = await fetch(observationStationsUrl, { headers }).then(r => r.json()).catch(() => null);
-        const station = stations?.features?.[0]?.properties?.stationIdentifier;
-        if (station) {
-          const obs = await fetch(`https://api.weather.gov/stations/${station}/observations/latest`, { headers }).then(r => r.json()).catch(() => null);
+        const features: any[] = stations?.features ?? [];
+        for (const f of features.slice(0, 6)) {
+          const stId = f?.properties?.stationIdentifier;
+          if (!stId) continue;
+          const obs = await fetch(`https://api.weather.gov/stations/${stId}/observations/latest`, { headers }).then(r => r.json()).catch(() => null);
           const p = obs?.properties;
-          if (p) {
-            const tempC = p.temperature?.value;
-            if (typeof tempC === "number") temperatureF = Math.round(tempC * 9 / 5 + 32);
-            conditionText = p.textDescription ?? null;
-            icon = p.icon ?? null;
-            humidity = typeof p.relativeHumidity?.value === "number" ? Math.round(p.relativeHumidity.value) : null;
-            const windKmh = p.windSpeed?.value;
-            if (typeof windKmh === "number") {
-              const mph = Math.round(windKmh * 0.621371);
-              windText = mph > 0 ? `${mph} mph` : "calm";
-            }
+          if (!p) continue;
+          const tempC = p.temperature?.value;
+          if (typeof tempC !== "number") continue; // try next station
+          temperatureF = Math.round(tempC * 9 / 5 + 32);
+          conditionText = p.textDescription ?? null;
+          icon = p.icon ?? null;
+          humidity = typeof p.relativeHumidity?.value === "number" ? Math.round(p.relativeHumidity.value) : null;
+          const windKmh = p.windSpeed?.value;
+          if (typeof windKmh === "number") {
+            const mph = Math.round(windKmh * 0.621371);
+            windText = mph > 0 ? `${mph} mph` : "calm";
           }
+          break; // got it
         }
       }
       if (forecastUrl) {
@@ -578,6 +584,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (p.isDaytime && high == null) high = p.temperature;
           if (!p.isDaytime && low == null) low = p.temperature;
           if (high != null && low != null) break;
+        }
+        // Fallback: if no observation station gave us a current temp/condition,
+        // use the first forecast period's values. Better than showing nothing.
+        if (temperatureF == null && periods.length > 0) {
+          const first = periods[0];
+          if (typeof first.temperature === "number") temperatureF = first.temperature;
+          if (typeof first.shortForecast === "string" && !conditionText) conditionText = first.shortForecast;
+          if (typeof first.windSpeed === "string" && !windText) windText = first.windSpeed;
         }
       }
       if (alertsZone) {

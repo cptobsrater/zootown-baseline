@@ -411,13 +411,68 @@ export function isStale(item: RawItem, maxAgeDays = 14): boolean {
   return ageMs > maxAgeDays * 24 * 60 * 60 * 1000;
 }
 
-export function shouldSkipItem(item: RawItem, _source: Source): string | null {
+// Map city_id -> regex markers that strongly identify a story as belonging
+// to that city. Used to drop cross-city syndicated stories (e.g. KTVH Helena
+// republishing a Great Falls story onto Helena's feed).
+//
+// Markers are checked against the headline. The headline is the strongest
+// signal because TV stations tend to lead with the city name ("Great Falls
+// LGBTQ+ Center re-opens...").
+const CITY_HEADLINE_MARKERS: Record<number, RegExp> = {
+  // 1 missoula
+  1: /\b(missoula|hellgate|bonner|lolo|university of montana|griz\b)/i,
+  // 2 billings
+  2: /\b(billings|yellowstone county|metrapark|laurel\b)/i,
+  // 3 greatfalls
+  3: /\b(great falls|cascade county|malmstrom|electric city|c\.\s*m\.\s*russell)/i,
+  // 4 bozeman
+  4: /\b(bozeman|gallatin|big sky\b|belgrade|msu\b|montana state university)/i,
+  // 5 butte
+  5: /\b(butte|silver bow|anaconda|berkeley pit|uptown butte)/i,
+  // 6 helena
+  6: /\b(helena|lewis and clark county|carroll college|last chance gulch|capitol|mt\.?\s*helena)/i,
+  // 7 kalispell
+  7: /\b(kalispell|flathead valley|flathead lake|columbia falls|glacier national park)/i,
+  // 8 havre
+  8: /\b(havre|hi-line|rocky boy|hill county|chinook\b|msu-?northern)/i,
+  // 9 whitefish
+  9: /\b(whitefish|big mountain|stumptown)/i,
+  // 10 laurel
+  10: /\b(laurel|cenex|yellowstone river|crow agency)/i,
+};
+
+/**
+ * Returns true if the headline strongly signals a city OTHER than the source's
+ * own city. Used to drop cross-city syndicated stories from regional TV feeds.
+ */
+export function headlineBelongsToDifferentCity(headline: string, sourceCityId: number | null | undefined): number | null {
+  if (!sourceCityId) return null;
+  const h = headline || "";
+  // Find every city whose marker hits the headline.
+  const hits: number[] = [];
+  for (const [cid, re] of Object.entries(CITY_HEADLINE_MARKERS)) {
+    if (re.test(h)) hits.push(Number(cid));
+  }
+  // No other city named in the headline — fine.
+  if (hits.length === 0) return null;
+  // Headline names the source's own city — fine even if it mentions another.
+  if (hits.includes(sourceCityId)) return null;
+  // Headline names a single different city — return it as the "correct" city.
+  // (Caller decides whether to reassign or drop.)
+  return hits[0];
+}
+
+export function shouldSkipItem(item: RawItem, source: Source): string | null {
   if (isOpinionContent(item)) return "opinion";
   if (isJobPosting(item)) return "job_posting";
   if (isClassified(item)) return "classified";
   if (isStale(item, 14)) return "stale";
   const summary = (item.summary ?? "").trim();
   if (!summary && item.title.length < 24) return "low_quality";
+  // Cross-city pollution: regional TV stations republish other cities' news.
+  // If the headline names another city explicitly, drop it from this source.
+  const wrongCity = headlineBelongsToDifferentCity(item.title, (source as any).cityId ?? null);
+  if (wrongCity !== null) return "wrong_city";
   return null;
 }
 

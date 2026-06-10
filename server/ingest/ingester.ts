@@ -126,7 +126,27 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
           duplicates++;
           continue;
         }
-        const startsAt = parseEventDate(item.summary, item.publishedAt) ?? new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+        // Calendar events MUST have a real start time. If we can't parse one
+        // from the summary/headline OR the feed-provided publishedAt, skip
+        // this item entirely. Better to have an empty calendar than to fill
+        // it with bogus "7 days from now" placeholders.
+        // Also check the headline since some calendar feeds put the date there.
+        const parsedFromText = parseEventDate(item.summary, undefined)
+          ?? parseEventDate(item.title, undefined);
+        // Only trust publishedAt as a fallback if it's in the future (i.e. the
+        // feed is signaling event start time via pubDate, common for iCal/event
+        // RSS like Ticketmaster). Past publishedAt = article-style content, skip.
+        let startsAt: string | undefined = parsedFromText;
+        if (!startsAt && item.publishedAt) {
+          const t = Date.parse(item.publishedAt);
+          if (Number.isFinite(t) && t > Date.now() - 24 * 3600 * 1000) {
+            startsAt = new Date(t).toISOString();
+          }
+        }
+        if (!startsAt) {
+          duplicates++; // (re-use the counter; we just want to not add)
+          continue;
+        }
         await storage.createEvent({
           title: item.title.slice(0, 220),
           venue: extractVenue(item.summary) ?? source.name,
