@@ -43,7 +43,7 @@ export function EditStoryModal({ story, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const isEvent = desk === "events";
+  const isEvent = desk === "entertainment";
 
   async function save() {
     if (busy) return;

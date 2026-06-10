@@ -95,12 +95,12 @@ export const DESK_META = {
     color: "health" as const,
     letter: "M",
   },
-  events: {
-    id: "events" as const,
-    label: "Events",
-    short: "Events",
-    description: "Concerts, festivals, community gatherings, and what's happening this weekend.",
-    color: "events" as const,
+  entertainment: {
+    id: "entertainment" as const,
+    label: "Entertainment",
+    short: "Entertainment",
+    description: "Local live entertainment — music, shows, and the Missoula stage.",
+    color: "entertainment" as const,
     letter: "E",
   },
   people: {

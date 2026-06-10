@@ -184,7 +184,7 @@ function InboxRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const isEvent = story.desk === "events";
+  const isEvent = story.desk === "entertainment";
   const timestamp = new Date(story.publishedAt);
   const time = isNaN(timestamp.getTime())
     ? "—"

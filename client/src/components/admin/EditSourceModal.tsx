@@ -4,7 +4,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Save, X } from "lucide-react";
 import type { Source } from "@shared/schema";
 
-const DESKS = ["city", "business", "crime", "sports", "health", "events", "people", "history"];
+const DESKS = ["city", "business", "crime", "sports", "health", "entertainment", "people", "history"];
 const FEED_TYPES = ["rss", "atom", "html", "headless", "none"] as const;
 const CATEGORIES = ["official", "news", "calendars", "social"] as const;
 

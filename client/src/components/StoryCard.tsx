@@ -24,13 +24,13 @@ const SOURCE_BADGE_STYLE: Record<string, string> = {
   "Local News":
     "bg-desk-business/10 text-[hsl(var(--desk-business))] border border-[hsl(var(--desk-business))]/30",
   "Community Calendar":
-    "bg-desk-events/10 text-[hsl(var(--desk-events))] border border-[hsl(var(--desk-events))]/30",
+    "bg-desk-entertainment/10 text-[hsl(var(--desk-entertainment))] border border-[hsl(var(--desk-entertainment))]/30",
 };
 
 const STATUS_STYLE: Record<string, string> = {
   New: "bg-primary/12 text-primary border border-primary/25",
   Updated: "bg-foreground/8 text-foreground border border-foreground/15",
-  Event: "bg-[hsl(var(--desk-events))]/12 text-[hsl(var(--desk-events))] border border-[hsl(var(--desk-events))]/30",
+  Event: "bg-[hsl(var(--desk-entertainment))]/12 text-[hsl(var(--desk-entertainment))] border border-[hsl(var(--desk-entertainment))]/30",
   Developing: "bg-destructive/12 text-destructive border border-destructive/25",
 };
 
@@ -97,8 +97,8 @@ export function StoryCard({ story, onOpen }: Props) {
         className="mt-3 font-serif text-[1.18rem] leading-snug font-semibold text-foreground group-hover:text-primary transition-colors"
         data-testid={`text-headline-${story.id}`}
       >
-        {story.desk === "events" && (story as any).eventDate && (
-          <span className="mr-1 font-mono text-[0.72rem] font-bold uppercase tracking-[0.1em] text-[hsl(var(--desk-events))]">
+        {story.desk === "entertainment" && (story as any).eventDate && (
+          <span className="mr-1 font-mono text-[0.72rem] font-bold uppercase tracking-[0.1em] text-[hsl(var(--desk-entertainment))]">
             {formatEventDate((story as any).eventDate)} —{" "}
           </span>
         )}

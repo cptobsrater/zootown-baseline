@@ -28,7 +28,7 @@ const ACTION_LABELS: Record<Rule["action"], string> = {
   reject: "Reject the story",
   set_kind: "Set kind",
 };
-const DESKS = ["city", "business", "crime", "sports", "health", "events", "people", "history"];
+const DESKS = ["city", "business", "crime", "sports", "health", "entertainment", "people", "history"];
 
 export function RulesPanel() {
   const qc = useQueryClient();

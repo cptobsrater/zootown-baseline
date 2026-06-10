@@ -34,7 +34,7 @@ const DESK_ORDER: DeskId[] = [
   "crime",
   "sports",
   "health",
-  "events",
+  "entertainment",
   "people",
   "history",
 ];

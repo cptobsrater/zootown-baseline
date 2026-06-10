@@ -14,7 +14,7 @@ const DESK_ORDER: Array<"all" | DeskId> = [
   "crime",
   "sports",
   "health",
-  "events",
+  "entertainment",
   "people",
   "history",
 ];

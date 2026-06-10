@@ -20,7 +20,7 @@ const TABS: Array<{ id: "all" | DeskId; label: string }> = [
   { id: "crime", label: "Crime" },
   { id: "sports", label: "Sports" },
   { id: "health", label: "Health" },
-  { id: "events", label: "Events" },
+  { id: "entertainment", label: "Entertainment" },
   { id: "people", label: "People" },
   { id: "history", label: "History" },
 ];

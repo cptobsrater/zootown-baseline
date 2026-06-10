@@ -204,7 +204,7 @@ function StatusDot({ status }: { status: string }) {
         className="inline-flex h-5 w-5 items-center justify-center rounded-full"
         title="Last run succeeded"
       >
-        <CheckCircle2 className="h-4 w-4 text-[hsl(var(--desk-events))]" />
+        <CheckCircle2 className="h-4 w-4 text-[hsl(var(--desk-entertainment))]" />
       </span>
     );
   }

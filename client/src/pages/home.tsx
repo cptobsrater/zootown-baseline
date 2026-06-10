@@ -28,7 +28,7 @@ interface HistoryStory {
 
 const VALID_DESKS = [
   "all", "city", "business", "crime", "sports", "health",
-  "events", "people", "history",
+  "entertainment", "people", "history",
 ] as const;
 
 function readPendingDesk(): "all" | DeskId {
@@ -81,7 +81,7 @@ export default function Home() {
   // History + People desks: long-form articles come from /api/history (shared pool)
   const isHistoryDesk = desk === "history";
   const isPeopleDesk = desk === "people";
-  const isEventsDesk = desk === "events";
+  const isEventsDesk = desk === "entertainment";
 
   const historyQuery = useQuery<HistoryStory[]>({
     queryKey: ["/api/history", isPeopleDesk ? "people" : "history"],
@@ -282,7 +282,7 @@ export default function Home() {
                     Curated stories · rotated weekly · rooted in archival fact
                   </p>
                 )}
-                {desk === "events" && (
+                {desk === "entertainment" && (
                   <p className="mt-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
                     Upcoming events · sorted by date · past events hidden
                   </p>

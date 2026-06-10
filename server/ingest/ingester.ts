@@ -95,12 +95,20 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
 
   const fetched = result.items.length;
   const isCalendar = source.category === "calendars";
-  let calendarDesk = "culture";
+  // Calendar-category sources default to 'entertainment' (the live-music/shows/festivals desk).
+  // Per-source override: the source's `desks` JSON array overrides if set.
+  // Retired 'events' or unknown 'culture' fall back to 'entertainment'.
+  let calendarDesk = "entertainment";
   if (isCalendar && source.desks) {
     try {
       const parsed = JSON.parse(source.desks);
       if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "string") {
-        calendarDesk = parsed[0];
+        const candidate = parsed[0];
+        if (candidate === "events" || candidate === "culture") {
+          calendarDesk = "entertainment";
+        } else {
+          calendarDesk = candidate;
+        }
       }
     } catch {
       // ignore

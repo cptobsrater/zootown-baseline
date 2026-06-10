@@ -36,7 +36,7 @@ export function canonicalizeUrl(raw: string): string {
 // Valid desks for v2 (politics and science_tech retired — remapped at ingest)
 const VALID_DESKS = new Set<Desk>([
   "city", "business", "crime", "sports", "health",
-  "events", "people", "history",
+  "entertainment", "people", "history",
 ]);
 
 // Remap retired desks at ingest. Politics → city. Science/Tech → business.
@@ -86,7 +86,7 @@ function isLocalMontanaSource(source: Source): boolean {
   }
 }
 
-// Event sources that should always be classified as "events"
+// Event sources that should always be classified as "entertainment"
 const EVENTS_SOURCES = [
   "logjam", "eventbrite", "ticketmaster", "destination missoula", "visit missoula",
   "gatherboard", "missoula events", "adams center", "griztix", "missoula county fairgrounds",
@@ -103,9 +103,9 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
   const text = `${item.title} ${item.summary ?? ""} ${(item.categories ?? []).join(" ")}`.toLowerCase();
 
   // 1. Events: eventDate metadata OR events source
-  if (item.eventDate || isEventsSource(source)) return "events";
+  if (item.eventDate || isEventsSource(source)) return "entertainment";
   if (/\b(festival|concert|live music|open mic|art opening|gallery reception|community event|free event|join us|tickets available|doors open|rsvp|register now)\b/.test(text) &&
-      isLocalMontanaSource(source)) return "events";
+      isLocalMontanaSource(source)) return "entertainment";
 
   // 2. People: profile/personality stories about named local figures
   if (/\b(profile|interview with|q&a|born and raised|in conversation with|meet the|a life in|longtime missoula|longtime montana|veteran missoula|veteran montana)\b/.test(text)) {
@@ -146,7 +146,7 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
   ], 2);
 
   // Events — local events
-  hit("events", [
+  hit("entertainment", [
     "festival", "concert", "live music", "open mic", "art opening", "gallery opening",
     "community event", "free event", "tickets", "doors open", "rsvp", "upcoming event",
     "this weekend", "tomorrow night", "this saturday", "this sunday", "tonight at",
@@ -206,7 +206,7 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
 
   // --- Apply geo gate ---
   // EVERY desk requires a Montana/Missoula tie. There are no global desks.
-  const geoGatedDesks: Desk[] = ["city", "business", "crime", "sports", "health", "events", "people", "history"];
+  const geoGatedDesks: Desk[] = ["city", "business", "crime", "sports", "health", "entertainment", "people", "history"];
   const hasTextSignal = hasGeoSignal(text);
   const fromLocalSource = isLocalMontanaSource(source);
   const wireMarker = looksLikeNationalWire(text);
@@ -332,7 +332,7 @@ const TAG_KEYWORDS: Record<string, string[]> = {
   "restaurant": ["restaurant", "cafe", "brewery", "brewfest", "food"],
   "music": ["music", "concert", "band", "headliner", "festival"],
   "arts": ["art", "arts", "exhibit", "gallery", "residency"],
-  "events": ["festival", "event", "out to lunch", "brewfest"],
+  "entertainment": ["festival", "event", "out to lunch", "brewfest"],
   "library": ["library"],
   "elections": ["election", "candidate", "trustee"],
   "griz": ["griz", "grizzlies", "lady griz"],

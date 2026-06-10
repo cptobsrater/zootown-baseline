@@ -70,8 +70,8 @@
   --desk-health: 188 64% 30%;          /* clinical teal */
   --desk-health-fg: 36 24% 97%;
 
-  --desk-events: 38 90% 45%;           /* amber/golden */
-  --desk-events-fg: 36 24% 97%;
+  --desk-entertainment: 38 90% 45%;    /* amber/golden — marquee lights */
+  --desk-entertainment-fg: 36 24% 97%;
   --desk-people: 270 50% 50%;          /* violet */
   --desk-people-fg: 36 24% 97%;
   --desk-history: 25 35% 35%;          /* sepia */
@@ -177,8 +177,8 @@
   --desk-health: 188 60% 56%;
   --desk-health-fg: 220 28% 7%;
 
-  --desk-events: 38 92% 58%;
-  --desk-events-fg: 220 28% 7%;
+  --desk-entertainment: 38 92% 58%;
+  --desk-entertainment-fg: 220 28% 7%;
   --desk-people: 270 55% 68%;
   --desk-people-fg: 220 28% 7%;
   --desk-history: 25 42% 52%;
@@ -259,9 +259,9 @@
   .bg-desk-health { background-color: hsl(var(--desk-health)); color: hsl(var(--desk-health-fg)); }
   .border-desk-health { border-color: hsl(var(--desk-health)); }
 
-  .desk-events { color: hsl(var(--desk-events)); }
-  .bg-desk-events { background-color: hsl(var(--desk-events)); color: hsl(var(--desk-events-fg)); }
-  .border-desk-events { border-color: hsl(var(--desk-events)); }
+  .desk-entertainment { color: hsl(var(--desk-entertainment)); }
+  .bg-desk-entertainment { background-color: hsl(var(--desk-entertainment)); color: hsl(var(--desk-entertainment-fg)); }
+  .border-desk-entertainment { border-color: hsl(var(--desk-entertainment)); }
 
   .desk-people { color: hsl(var(--desk-people)); }
   .bg-desk-people { background-color: hsl(var(--desk-people)); color: hsl(var(--desk-people-fg)); }

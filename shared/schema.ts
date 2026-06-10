@@ -3,9 +3,9 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Desk identifiers — EXACT ORDER matters for UI tabs
-export const DESKS = ["city", "business", "crime", "sports", "health", "events", "people", "history"] as const;
+export const DESKS = ["city", "business", "crime", "sports", "health", "entertainment", "people", "history"] as const;
 export type Desk = (typeof DESKS)[number];
-export const RETIRED_DESKS = ["politics", "science_tech"] as const;
+export const RETIRED_DESKS = ["politics", "science_tech", "events"] as const;
 export type RetiredDesk = (typeof RETIRED_DESKS)[number];
 
 export const POLITICAL_SCOPES = ["local", "state", "national"] as const;

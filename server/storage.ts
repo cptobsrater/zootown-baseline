@@ -55,7 +55,7 @@ export interface StoryQuery {
   cursor?: number;
   modState?: "all" | "draft" | "approved" | "rejected";
   isReviewed?: boolean;          // filter by admin-review state
-  includeEvents?: boolean;       // when false (default), desk='events' rows are excluded from news feed
+  includeEvents?: boolean;       // legacy flag kept for compat; events live as desk-tagged stories now
 }
 
 // ------ Row mappers (snake_case DB rows → camelCase types) ------
@@ -326,9 +326,6 @@ export class DatabaseStorage implements IStorage {
     if (modState !== "all") conditions.push(eq(stories.modState, modState));
     if (q.desk && q.desk !== "all") {
       conditions.push(eq(stories.desk, q.desk));
-    } else if (!q.includeEvents) {
-      // Public news feed: hide events (they belong on the calendar).
-      conditions.push(ne(stories.desk, "events"));
     }
     if (q.isReviewed !== undefined) conditions.push(eq(stories.isReviewed, q.isReviewed));
     if (needle) {
@@ -367,9 +364,11 @@ export class DatabaseStorage implements IStorage {
     return this.getStory(id);
   }
 
-  // ----- Events -----
-  // Events are stored in `stories` with desk='events'. The dedicated `events` table
-  // is kept only as a legacy fallback; new writes go to stories.
+  // ----- Events / Calendar -----
+  // Anything in `stories` with a non-null starts_at counts as an "event" for the
+  // community calendar. Desk is preserved so each row keeps its category color
+  // (a city mayoral debate is desk='city', a Wilma show is desk='entertainment',
+  // both appear on the calendar with their respective colors).
   async listEvents(limit = 6): Promise<EventItem[]> {
     const nowIso = new Date().toISOString();
     const rows = await db
@@ -377,12 +376,12 @@ export class DatabaseStorage implements IStorage {
       .from(stories)
       .where(
         and(
-          eq(stories.desk, "events"),
           ne(stories.modState, "rejected"),
+          // Has a start time, and either still upcoming or no end set.
+          gte(stories.startsAt, sql`'1970-01-01T00:00:00Z'`),
           or(
             gte(stories.endsAt, nowIso),
             and(isNull(stories.endsAt), gte(stories.startsAt, nowIso)),
-            and(isNull(stories.endsAt), isNull(stories.startsAt)),
           ),
         ),
       )
@@ -392,21 +391,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   async findEventByUrl(url: string): Promise<EventItem | undefined> {
+    // For ingest-time dedupe of calendar items.
     const rows = await db
       .select()
       .from(stories)
-      .where(and(eq(stories.sourceUrl, url), eq(stories.desk, "events")))
+      .where(and(eq(stories.sourceUrl, url), gte(stories.startsAt, sql`'1970-01-01T00:00:00Z'`)))
       .limit(1);
     return rows[0] ? rowToEventFromStory(rows[0]) : undefined;
   }
 
   async createEvent(input: InsertEvent): Promise<EventItem> {
-    // Insert as a story with desk='events'.
+    // Insert as a story. Desk comes from the ingester (`entertainment` by default
+    // for calendar-category sources, but the desk can be overridden per source).
     const now = new Date().toISOString();
+    const targetDesk = input.desk && typeof input.desk === "string" ? input.desk : "entertainment";
     const storyRow = {
       headline: input.title,
       summary: input.description ?? input.title,
-      desk: "events",
+      desk: targetDesk,
       tags: "[]",
       sourceName: input.sourceName,
       sourceUrl: input.sourceUrl,
