@@ -20,7 +20,73 @@ const PARSERS: Record<string, (html: string, source: Source) => RawItem[]> = {
   "zacc": genericArticleParser,
   "missoula-events": missoulaEventsParser,
   "logjam": logjamParser,
+  // "json-ld" is the generic event extractor for venue pages that embed
+  // schema.org Event records in <script type="application/ld+json"> blocks.
+  // Used as the default for category=calendars when no parserKey is set.
+  "json-ld": jsonLdEventParser,
 };
+
+/**
+ * Generic schema.org Event extractor.
+ *
+ * Many venue/ticketing sites embed JSON-LD blocks describing upcoming Event
+ * objects — each with a name, startDate, location, and url. We collect them
+ * all into RawItems so the calendar ingester can route them to the events
+ * table with real start times.
+ */
+function jsonLdEventParser(html: string, source: Source): RawItem[] {
+  const items: RawItem[] = [];
+  const seen = new Set<string>();
+  const blockRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = blockRe.exec(html)) !== null && items.length < 60) {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(m[1].trim());
+    } catch {
+      continue;
+    }
+    // JSON-LD can be a single object, an array, or a @graph wrapper.
+    const stack: any[] = Array.isArray(parsed) ? [...parsed] : [parsed];
+    while (stack.length) {
+      const node = stack.shift();
+      if (!node || typeof node !== "object") continue;
+      if (Array.isArray(node["@graph"])) stack.push(...node["@graph"]);
+      const t = node["@type"];
+      const isEvent =
+        t === "Event" ||
+        t === "MusicEvent" ||
+        t === "TheaterEvent" ||
+        t === "SportsEvent" ||
+        t === "Festival" ||
+        (Array.isArray(t) && t.some((x) => /Event/i.test(String(x))));
+      if (!isEvent) continue;
+      const title = (node.name ?? "").toString().trim();
+      const startDate = (node.startDate ?? node.start ?? "").toString().trim();
+      const url = (node.url ?? node["@id"] ?? source.url ?? "").toString().trim();
+      if (!title || !startDate || !url) continue;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      // Build a summary from venue + description if available
+      const venue = typeof node.location === "object"
+        ? (node.location.name ?? node.location["@name"] ?? null)
+        : (typeof node.location === "string" ? node.location : null);
+      const description = (node.description ?? "").toString().trim().slice(0, 280);
+      const summaryParts: string[] = [];
+      if (startDate) summaryParts.push(startDate);
+      if (venue) summaryParts.push(String(venue));
+      if (description) summaryParts.push(description);
+      items.push({
+        title: title.slice(0, 220),
+        url,
+        categories: ["Event"],
+        summary: summaryParts.join(" · ") || undefined,
+        publishedAt: startDate, // calendar ingester reads this as event start time
+      });
+    }
+  }
+  return items;
+}
 
 /** Logjam Presents — Missoula concert promoter. Events live at /event/<slug> */
 function logjamParser(html: string, source: Source): RawItem[] {
@@ -223,12 +289,20 @@ export const htmlFetcher: Fetcher = {
   async fetch(source, opts): Promise<FetchResult> {
     const timeoutMs = opts?.timeoutMs ?? 7000;
     const parserKey = source.parserKey ?? "";
-    const parser = PARSERS[parserKey];
-    if (!source.feedUrl || !parser) {
+    // For calendar-category sources with no explicit parser, fall back to the
+    // generic JSON-LD event extractor. Most venue ticketing pages publish
+    // schema.org Event blocks that we can extract without per-site code.
+    const resolvedKey = parserKey
+      || (source.category === "calendars" ? "json-ld" : "");
+    const parser = PARSERS[resolvedKey];
+    // Use source.url as the page to fetch when no explicit feedUrl is set
+    // (typical for HTML venue pages).
+    const fetchUrl = source.feedUrl || source.url;
+    if (!fetchUrl || !parser) {
       return { mode: "mock", items: loadFixture(source), error: "no parser configured" };
     }
     try {
-      const res = await fetchWithTimeout(source.feedUrl, timeoutMs);
+      const res = await fetchWithTimeout(fetchUrl, timeoutMs);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const html = await res.text();
       const items = parser(html, source);
