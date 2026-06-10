@@ -3,19 +3,19 @@ import type { Config } from "tailwindcss";
 export default {
   darkMode: ["class"],
   content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
+  // Desk classes are constructed at runtime via template literals like
+  // `bg-desk-${desk}` — Tailwind can't see those strings during purge so we
+  // safelist every active desk variant here.
   safelist: [
     "bg-desk-city", "bg-desk-business", "bg-desk-crime",
-    "bg-desk-sports", "bg-desk-health", "bg-desk-events",
-    "bg-desk-politics", "bg-desk-people", "bg-desk-history",
-    "bg-desk-science_tech",
+    "bg-desk-sports", "bg-desk-health", "bg-desk-entertainment",
+    "bg-desk-people", "bg-desk-history",
     "desk-city", "desk-business", "desk-crime",
-    "desk-sports", "desk-health", "desk-events",
-    "desk-politics", "desk-people", "desk-history",
-    "desk-science_tech",
+    "desk-sports", "desk-health", "desk-entertainment",
+    "desk-people", "desk-history",
     "border-desk-city", "border-desk-business", "border-desk-crime",
-    "border-desk-sports", "border-desk-health", "border-desk-events",
-    "border-desk-politics", "border-desk-people", "border-desk-history",
-    "border-desk-science_tech",
+    "border-desk-sports", "border-desk-health", "border-desk-entertainment",
+    "border-desk-people", "border-desk-history",
     "bg-scope-local", "bg-scope-state", "bg-scope-national",
     "scope-local", "scope-state", "scope-national",
     "border-scope-local", "border-scope-state", "border-scope-national",
