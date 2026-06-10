@@ -534,7 +534,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const cacheKey = `${lat},${lon}`;
       const now = Date.now();
       const cached = weatherCache.get(cacheKey);
-      if (cached && now - cached.fetchedAt < 10 * 60 * 1000) {
+      // 3-minute server-side cache. Short enough that newly-issued NWS
+      // alerts surface quickly across lambda instances; long enough to
+      // protect NWS from being hammered by every page view.
+      if (cached && now - cached.fetchedAt < 3 * 60 * 1000) {
         return res.json(cached.payload);
       }
       const headers = { "User-Agent": "ZooTown/1.0 (Montana civic aggregator)", Accept: "application/geo+json" };
@@ -594,12 +597,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           if (typeof first.windSpeed === "string" && !windText) windText = first.windSpeed;
         }
       }
-      if (alertsZone) {
-        const a = await fetch(`https://api.weather.gov/alerts/active?zone=${alertsZone.split("/").pop()}`, { headers }).then(r => r.json()).catch(() => null);
-        alerts = (a?.features ?? []).map((f: any) => ({
-          event: f.properties?.event ?? "Alert",
-          severity: f.properties?.severity ?? "Unknown",
-        }));
+      // Active alerts — query NWS by point (most reliable; matches what a user
+      // would see on weather.gov for that lat/lon). Fall back to the county
+      // zone query if the point query fails. Dedupe identical events.
+      let alertsFetchFailed = false;
+      async function fetchAlerts(url: string) {
+        try {
+          const r = await fetch(url, { headers });
+          if (!r.ok) return null;
+          return await r.json();
+        } catch {
+          return null;
+        }
+      }
+      const pointUrl = `https://api.weather.gov/alerts/active?point=${lat},${lon}`;
+      let a = await fetchAlerts(pointUrl);
+      if (a === null && alertsZone) {
+        // Retry via county zone
+        a = await fetchAlerts(`https://api.weather.gov/alerts/active?zone=${alertsZone.split("/").pop()}`);
+      }
+      if (a === null) {
+        alertsFetchFailed = true;
+      } else {
+        const seen = new Set<string>();
+        const features = (a?.features ?? []) as any[];
+        for (const f of features) {
+          const event = f.properties?.event ?? "Alert";
+          const severity = f.properties?.severity ?? "Unknown";
+          const headline = f.properties?.headline ?? "";
+          const key = `${event}|${headline}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          alerts.push({ event, severity, headline });
+        }
       }
       const locationLabel = city ? `${city.displayName}, ${city.state}` : "Missoula, MT";
       const forecastLink = `https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}`;
@@ -617,7 +647,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         sourceUrl: forecastLink,
         fetchedAt: new Date().toISOString(),
       };
-      weatherCache.set(cacheKey, { fetchedAt: now, payload });
+      // Only cache if the alerts fetch succeeded — we'd rather make NWS
+      // do extra work than serve users "no alerts" for 10 minutes when
+      // there actually are active alerts.
+      if (!alertsFetchFailed) {
+        weatherCache.set(cacheKey, { fetchedAt: now, payload });
+      }
       res.json(payload);
     } catch (err: any) {
       res.status(200).json({
