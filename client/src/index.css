@@ -70,7 +70,7 @@
   --desk-health: 188 64% 30%;          /* clinical teal */
   --desk-health-fg: 36 24% 97%;
 
-  --desk-entertainment: 38 90% 45%;    /* amber/golden — marquee lights */
+  --desk-entertainment: 325 70% 45%;   /* magenta — marquee/neon, unique vs. all other desks */
   --desk-entertainment-fg: 36 24% 97%;
   --desk-people: 270 50% 50%;          /* violet */
   --desk-people-fg: 36 24% 97%;
@@ -177,7 +177,7 @@
   --desk-health: 188 60% 56%;
   --desk-health-fg: 220 28% 7%;
 
-  --desk-entertainment: 38 92% 58%;
+  --desk-entertainment: 325 78% 65%;   /* magenta (dark mode) */
   --desk-entertainment-fg: 220 28% 7%;
   --desk-people: 270 55% 68%;
   --desk-people-fg: 220 28% 7%;
