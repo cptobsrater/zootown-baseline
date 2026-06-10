@@ -45,7 +45,11 @@ export const stories = pgTable("stories", {
   modState: text("mod_state").notNull().default("approved"),
   politicalScope: text("political_scope"),
   eventDate: text("event_date"),
-  // Event-specific fields (populated when desk = 'events')
+  // Community calendar membership. on_calendar = true means this row shows on the
+  // calendar AND requires a non-null starts_at (date+time of the event).
+  // Stories without a future date stay off the calendar; they still appear in
+  // their desk feed.
+  onCalendar: boolean("on_calendar").notNull().default(false),
   venue: text("venue"),
   startsAt: text("starts_at"),
   endsAt: text("ends_at"),

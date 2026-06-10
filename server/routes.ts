@@ -101,6 +101,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     desk: z.enum(DESKS).optional(),
     sourceUrl: z.string().url().max(800).optional(),
     sourceName: z.string().min(1).max(200).optional(),
+    onCalendar: z.boolean().optional(),
     venue: z.string().max(200).nullable().optional(),
     startsAt: z.string().max(40).nullable().optional(),
     endsAt: z.string().max(40).nullable().optional(),
@@ -144,10 +145,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const before = await storage.getStory(id);
     if (!before) return res.status(404).json({ error: "Not found" });
+
+    // Calendar binary rule: if onCalendar is being set to true (or already true
+    // and starts_at is being cleared), require a starts_at value.
+    const nextOnCalendar = parsed.data.onCalendar ?? before.onCalendar;
+    const nextStartsAt =
+      parsed.data.startsAt !== undefined ? parsed.data.startsAt : before.startsAt;
+    if (nextOnCalendar && !nextStartsAt) {
+      return res.status(400).json({
+        error:
+          "To show this on the community calendar, you must also set a start date and time. Either fill in 'Starts at' or turn off 'Show on calendar'.",
+      });
+    }
+    // Convenience: turning off the calendar flag clears the event-only fields.
+    if (parsed.data.onCalendar === false) {
+      if (parsed.data.venue === undefined) parsed.data.venue = null;
+      if (parsed.data.startsAt === undefined) parsed.data.startsAt = null;
+      if (parsed.data.endsAt === undefined) parsed.data.endsAt = null;
+    }
+
     const updated = await storage.updateStoryFields(id, parsed.data);
     if (!updated) return res.status(404).json({ error: "Not found" });
     const editedAt = new Date().toISOString();
-    for (const key of ["headline", "summary", "desk", "sourceUrl", "sourceName", "venue", "startsAt", "endsAt"] as const) {
+    for (const key of ["headline", "summary", "desk", "sourceUrl", "sourceName", "onCalendar", "venue", "startsAt", "endsAt"] as const) {
       const beforeVal = (before as any)[key] ?? null;
       const afterVal = (parsed.data as any)[key];
       if (afterVal !== undefined && afterVal !== beforeVal) {

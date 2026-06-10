@@ -2,14 +2,13 @@ import { useEffect, useState } from "react";
 import type { Story } from "@shared/schema";
 import { DESKS } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Loader2, X, Save } from "lucide-react";
+import { Loader2, X, Save, Calendar } from "lucide-react";
 
 interface Props {
   story: Story;
   onClose: () => void;
 }
 
-// Convert ISO datetime to <input type="datetime-local"> format (YYYY-MM-DDTHH:mm).
 function isoToLocal(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -29,6 +28,7 @@ export function EditStoryModal({ story, onClose }: Props) {
   const [desk, setDesk] = useState(story.desk);
   const [sourceUrl, setSourceUrl] = useState(story.sourceUrl);
   const [sourceName, setSourceName] = useState(story.sourceName);
+  const [onCalendar, setOnCalendar] = useState<boolean>(!!story.onCalendar);
   const [venue, setVenue] = useState(story.venue ?? "");
   const [startsAt, setStartsAt] = useState(isoToLocal(story.startsAt));
   const [endsAt, setEndsAt] = useState(isoToLocal(story.endsAt));
@@ -43,18 +43,23 @@ export function EditStoryModal({ story, onClose }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const isEvent = desk === "entertainment";
-
   async function save() {
     if (busy) return;
+
+    if (onCalendar && !startsAt) {
+      setError("Pick a start date and time, or turn off 'Show on community calendar'.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
-    const patch: Record<string, string | null> = {};
+    const patch: Record<string, string | boolean | null> = {};
     if (headline !== story.headline) patch.headline = headline;
     if (summary !== story.summary) patch.summary = summary;
     if (desk !== story.desk) patch.desk = desk;
     if (sourceUrl !== story.sourceUrl) patch.sourceUrl = sourceUrl;
     if (sourceName !== story.sourceName) patch.sourceName = sourceName;
+    if (onCalendar !== !!story.onCalendar) patch.onCalendar = onCalendar;
     if ((venue || null) !== (story.venue || null)) patch.venue = venue || null;
     const newStartsAt = localToIso(startsAt);
     if (newStartsAt !== (story.startsAt || null)) patch.startsAt = newStartsAt;
@@ -68,7 +73,11 @@ export function EditStoryModal({ story, onClose }: Props) {
     }
 
     try {
-      await apiRequest("PATCH", `/api/admin/stories/${story.id}`, patch);
+      const res = await apiRequest("PATCH", `/api/admin/stories/${story.id}`, patch);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Save failed.");
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
       queryClient.invalidateQueries({ queryKey: ["/api/top-stories"] });
       queryClient.invalidateQueries({ queryKey: ["/api/events"] });
@@ -124,7 +133,7 @@ export function EditStoryModal({ story, onClose }: Props) {
 
           <div>
             <label className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-              {isEvent ? "Description" : "Summary"}
+              Body / Summary
             </label>
             <textarea
               value={summary}
@@ -152,11 +161,6 @@ export function EditStoryModal({ story, onClose }: Props) {
                   </option>
                 ))}
               </select>
-              {isEvent && (
-                <p className="mt-1 text-[0.7rem] text-muted-foreground">
-                  Routes to the community calendar instead of the news feed.
-                </p>
-              )}
             </div>
             <div>
               <label className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
@@ -183,45 +187,74 @@ export function EditStoryModal({ story, onClose }: Props) {
             />
           </div>
 
-          {isEvent && (
-            <div className="rounded-md border border-border bg-background/40 p-4 space-y-3">
-              <div className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                Event details
+          <div className="rounded-md border border-border bg-background/40 p-4 space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={onCalendar}
+                onChange={(e) => setOnCalendar(e.target.checked)}
+                data-testid="checkbox-on-calendar"
+                className="mt-0.5 h-4 w-4 accent-primary"
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-2 font-medium text-sm">
+                  <Calendar className="h-4 w-4 text-primary" />
+                  Show on community calendar
+                </div>
+                <p className="mt-0.5 text-[0.72rem] text-muted-foreground">
+                  Tick this only if the story has an upcoming date and time (a game, concert,
+                  meeting, etc.). Sentencings, profiles, or pure news pieces should stay off.
+                </p>
               </div>
-              <div>
-                <label className="text-xs text-muted-foreground">Venue</label>
-                <input
-                  value={venue}
-                  onChange={(e) => setVenue(e.target.value)}
-                  placeholder="e.g. Wilma Theater"
-                  data-testid="input-edit-venue"
-                  className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
-                />
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            </label>
+
+            {onCalendar && (
+              <div className="pl-7 space-y-3 border-l-2 border-primary/20">
                 <div>
-                  <label className="text-xs text-muted-foreground">Starts at</label>
+                  <label className="text-xs text-muted-foreground">Venue (optional)</label>
                   <input
-                    type="datetime-local"
-                    value={startsAt}
-                    onChange={(e) => setStartsAt(e.target.value)}
-                    data-testid="input-edit-starts-at"
+                    value={venue}
+                    onChange={(e) => setVenue(e.target.value)}
+                    placeholder="e.g. Wilma Theater"
+                    data-testid="input-edit-venue"
                     className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
                   />
                 </div>
-                <div>
-                  <label className="text-xs text-muted-foreground">Ends at (optional)</label>
-                  <input
-                    type="datetime-local"
-                    value={endsAt}
-                    onChange={(e) => setEndsAt(e.target.value)}
-                    data-testid="input-edit-ends-at"
-                    className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-muted-foreground">
+                      Starts at <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={startsAt}
+                      onChange={(e) => setStartsAt(e.target.value)}
+                      required
+                      data-testid="input-edit-starts-at"
+                      className={`mt-1 block w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none ${
+                        !startsAt ? "border-destructive/60" : "border-border focus:border-foreground/40"
+                      }`}
+                    />
+                    {!startsAt && (
+                      <p className="mt-1 text-[0.68rem] text-destructive">
+                        Required when on the calendar.
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">Ends at (optional)</label>
+                    <input
+                      type="datetime-local"
+                      value={endsAt}
+                      onChange={(e) => setEndsAt(e.target.value)}
+                      data-testid="input-edit-ends-at"
+                      className="mt-1 block w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:border-foreground/40 focus:outline-none"
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {error && (
             <div
@@ -248,7 +281,7 @@ export function EditStoryModal({ story, onClose }: Props) {
             </button>
             <button
               onClick={save}
-              disabled={busy}
+              disabled={busy || (onCalendar && !startsAt)}
               data-testid="button-save-edit"
               className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover-elevate active-elevate-2 disabled:opacity-60"
             >

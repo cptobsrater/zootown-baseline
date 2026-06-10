@@ -184,7 +184,7 @@ function InboxRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
-  const isEvent = story.desk === "entertainment";
+  const isOnCalendar = !!story.onCalendar;
   const timestamp = new Date(story.publishedAt);
   const time = isNaN(timestamp.getTime())
     ? "—"
@@ -201,8 +201,8 @@ function InboxRow({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <DeskBadge desk={story.desk} />
-            {isEvent && (
-              <span className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-1.5 py-0.5 text-[0.62rem] font-mono uppercase tracking-wide text-muted-foreground">
+            {isOnCalendar && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.62rem] font-mono uppercase tracking-wide text-primary">
                 <Calendar className="h-3 w-3" /> On calendar
               </span>
             )}
@@ -233,13 +233,13 @@ function InboxRow({
                 </a>
               </>
             )}
-            {isEvent && story.venue && (
+            {isOnCalendar && story.venue && (
               <>
                 <span>·</span>
                 <span>{story.venue}</span>
               </>
             )}
-            {isEvent && story.startsAt && (
+            {isOnCalendar && story.startsAt && (
               <>
                 <span>·</span>
                 <span>

@@ -79,6 +79,7 @@ function rowToStory(r: any): Story {
     modState: r.mod_state ?? r.modState,
     politicalScope: r.political_scope ?? r.politicalScope ?? null,
     eventDate: r.event_date ?? r.eventDate ?? null,
+    onCalendar: r.on_calendar === true || r.on_calendar === 1 || r.onCalendar === true,
     venue: r.venue ?? null,
     startsAt: r.starts_at ?? r.startsAt ?? null,
     endsAt: r.ends_at ?? r.endsAt ?? null,
@@ -275,7 +276,7 @@ export interface IStorage {
   listIngestRuns(limit?: number): Promise<IngestRun[]>;
   getTrendingTags(limit?: number): Promise<Array<{ tag: string; count: number }>>;
   getTopStories(limit?: number): Promise<Story[]>;
-  updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt">>): Promise<Story | undefined>;
+  updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt" | "onCalendar">>): Promise<Story | undefined>;
   markStoryReviewed(id: number, reviewed: boolean): Promise<Story | undefined>;
   deleteStory(id: number): Promise<boolean>;
   logEdit(edit: Omit<StoryEdit, "id">): Promise<StoryEdit>;
@@ -370,15 +371,15 @@ export class DatabaseStorage implements IStorage {
   // (a city mayoral debate is desk='city', a Wilma show is desk='entertainment',
   // both appear on the calendar with their respective colors).
   async listEvents(limit = 6): Promise<EventItem[]> {
+    // A story belongs on the calendar iff on_calendar = true.
     const nowIso = new Date().toISOString();
     const rows = await db
       .select()
       .from(stories)
       .where(
         and(
+          eq(stories.onCalendar, true),
           ne(stories.modState, "rejected"),
-          // Has a start time, and either still upcoming or no end set.
-          gte(stories.startsAt, sql`'1970-01-01T00:00:00Z'`),
           or(
             gte(stories.endsAt, nowIso),
             and(isNull(stories.endsAt), gte(stories.startsAt, nowIso)),
@@ -391,11 +392,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async findEventByUrl(url: string): Promise<EventItem | undefined> {
-    // For ingest-time dedupe of calendar items.
     const rows = await db
       .select()
       .from(stories)
-      .where(and(eq(stories.sourceUrl, url), gte(stories.startsAt, sql`'1970-01-01T00:00:00Z'`)))
+      .where(and(eq(stories.sourceUrl, url), eq(stories.onCalendar, true)))
       .limit(1);
     return rows[0] ? rowToEventFromStory(rows[0]) : undefined;
   }
@@ -423,6 +423,7 @@ export class DatabaseStorage implements IStorage {
       politicalScope: null,
       eventDate: input.startsAt,
       whyItMatters: null,
+      onCalendar: true, // ingested from a calendar source = belongs on calendar
       venue: input.venue,
       startsAt: input.startsAt,
       endsAt: input.endsAt ?? null,
@@ -611,7 +612,7 @@ export class DatabaseStorage implements IStorage {
   // ----- Story edit/delete + log -----
   async updateStoryFields(
     id: number,
-    fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt">>,
+    fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt" | "onCalendar">>,
   ): Promise<Story | undefined> {
     const set: Record<string, any> = {};
     if (fields.headline !== undefined) set.headline = fields.headline;
@@ -622,6 +623,7 @@ export class DatabaseStorage implements IStorage {
     if (fields.venue !== undefined) set.venue = fields.venue;
     if (fields.startsAt !== undefined) set.startsAt = fields.startsAt;
     if (fields.endsAt !== undefined) set.endsAt = fields.endsAt;
+    if (fields.onCalendar !== undefined) set.onCalendar = fields.onCalendar;
     if (Object.keys(set).length === 0) return this.getStory(id);
     await db.update(stories).set(set).where(eq(stories.id, id));
     return this.getStory(id);
