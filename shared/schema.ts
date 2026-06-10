@@ -19,7 +19,7 @@ export const cities = pgTable("cities", {
 });
 export type City = typeof cities.$inferSelect;
 export const CITY_SLUGS = [
-  "missoula", "billings", "great_falls", "bozeman", "butte",
+  "missoula", "billings", "greatfalls", "bozeman", "butte",
   "helena", "kalispell", "havre", "whitefish", "laurel",
 ] as const;
 export type CitySlug = (typeof CITY_SLUGS)[number];

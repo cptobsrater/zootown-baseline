@@ -61,14 +61,12 @@ export function TopBar({
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-5 md:px-6 lg:py-3.5">
-        {/* Left: logo + location */}
-        <div className="flex items-center gap-3">
+        {/* Left: logo + location (same row on mobile and desktop) */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <Link href={`/${currentCity.slug}`} data-testid="link-home" className="shrink-0">
             <Wordmark />
           </Link>
-          <div className="hidden md:block">
-            <CitySwitcher />
-          </div>
+          <CitySwitcher />
         </div>
 
         {/* Right: search + actions */}

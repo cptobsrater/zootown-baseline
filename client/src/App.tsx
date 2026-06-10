@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/lib/theme";
 import { CityProvider } from "@/lib/city-context";
 import NotFound from "@/pages/not-found";
+import Landing from "@/pages/landing";
 import Home from "@/pages/home";
 import AdminPage from "@/pages/admin";
 import CalendarPage from "@/pages/calendar";
@@ -14,20 +15,26 @@ import JobsPage from "@/pages/jobs";
 function AppRouter() {
   return (
     <Switch>
-      {/* Root redirects to Missoula */}
-      <Route path="/">
-        <Redirect to="/missoula" />
-      </Route>
+      {/* Root shows the city picker landing page */}
+      <Route path="/" component={Landing} />
 
       {/* Admin is not city-scoped at the URL level (admin uses an in-page city switcher) */}
       <Route path="/admin" component={AdminPage} />
+
+      {/* Legacy old-slug fall-through (great_falls -> greatfalls) */}
+      <Route path="/great_falls">
+        <Redirect to="/greatfalls" />
+      </Route>
+      <Route path="/great_falls/:rest*">
+        {(params) => <Redirect to={`/greatfalls/${params.rest ?? ""}`} />}
+      </Route>
 
       {/* City-scoped routes */}
       <Route path="/:city/calendar" component={CalendarPage} />
       <Route path="/:city/jobs" component={JobsPage} />
       <Route path="/:city" component={Home} />
 
-      {/* Legacy fall-throughs */}
+      {/* Legacy fall-throughs for the old root-level pages */}
       <Route path="/calendar">
         <Redirect to="/missoula/calendar" />
       </Route>
