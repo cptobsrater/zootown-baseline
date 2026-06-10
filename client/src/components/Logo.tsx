@@ -30,17 +30,14 @@ export function Logo({ className = "" }: { className?: string }) {
 }
 
 export function Wordmark({ className = "" }: { className?: string }) {
+  // The TopBar renders its own "Missoula, MT" pill next to the wordmark,
+  // so we keep the wordmark itself clean — monogram + name only.
   return (
     <div className={`inline-flex items-center gap-2.5 ${className}`}>
       <Logo className="h-8 w-8 text-foreground" />
-      <div className="flex flex-col leading-none">
-        <span className="font-serif text-[1.15rem] font-semibold tracking-tight text-foreground">
-          ZooTown
-        </span>
-        <span className="mt-0.5 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-          Missoula · MT
-        </span>
-      </div>
+      <span className="font-serif text-[1.25rem] font-semibold tracking-tight text-foreground leading-none">
+        ZooTown
+      </span>
     </div>
   );
 }
