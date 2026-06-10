@@ -11,6 +11,34 @@ import { DESKS, SOURCE_CATEGORIES, FEED_TYPES, SOURCE_TYPES } from "../shared/sc
 import { issueToken, revokeToken, requireAdmin, verifyPassword } from "./auth.js";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // ----- City resolver -----
+  // Every public endpoint accepts ?city=<slug>. Default = Missoula.
+  // We cache the slug → id map for the lambda's lifetime since cities change rarely.
+  let citySlugToId: Map<string, number> | null = null;
+  async function resolveCityId(slug: string | undefined | null): Promise<number | undefined> {
+    if (!slug) return undefined;
+    if (!citySlugToId) {
+      const all = await storage.listCities();
+      citySlugToId = new Map(all.map((c) => [c.slug, c.id]));
+    }
+    return citySlugToId.get(slug) ?? undefined;
+  }
+
+  // List of all cities (for the public dropdown)
+  app.get("/api/cities", async (_req, res) => {
+    const cs = await storage.listCities();
+    res.json(cs.map((c) => ({
+      id: c.id,
+      slug: c.slug,
+      displayName: c.displayName,
+      state: c.state,
+      lat: c.lat,
+      lon: c.lon,
+      countyName: c.countyName,
+      nwsZone: c.nwsZone,
+    })));
+  });
+
   // ----- Stories feed -----
   app.get("/api/stories", async (req, res) => {
     const schema = z.object({
@@ -21,10 +49,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       modState: z.enum(["all", "draft", "approved", "rejected"]).optional(),
       isReviewed: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
       includeEvents: z.enum(["true", "false"]).transform((v) => v === "true").optional(),
+      city: z.string().optional(),
     });
     const parsed = schema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    const result = await storage.listStories(parsed.data);
+    const cityId = await resolveCityId(parsed.data.city);
+    const result = await storage.listStories({ ...parsed.data, cityId });
     // Annotate each story with its source count so feed cards can show "+N sources".
     const items = await Promise.all(
       result.items.map(async (s) => ({ ...s, sourceCount: await storage.countStorySources(s.id) })),
@@ -280,12 +310,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     desks: z.array(z.enum(DESKS)).min(1),
     cadenceMinutes: z.coerce.number().int().min(5).max(720).default(15),
     category: z.enum(SOURCE_CATEGORIES),
+    city: z.string().optional(),
   });
 
   app.post("/api/admin/sources", requireAdmin, async (req, res) => {
     const parsed = newSourceSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const d = parsed.data;
+    const cityId = (await resolveCityId(d.city)) ?? 1; // default to Missoula
     const created = await storage.createSource({
       name: d.name,
       url: d.url,
@@ -304,6 +336,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       lastCheckedAt: null,
       lastMode: null,
       lastError: null,
+      cityId,
     } as any);
     res.json(created);
   });
@@ -435,15 +468,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/events", async (req, res) => {
     const schema = z.object({
       limit: z.coerce.number().int().min(1).max(500).optional(),
+      city: z.string().optional(),
     });
     const parsed = schema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    res.json(await storage.listEvents(parsed.data.limit ?? 8));
+    const cityId = await resolveCityId(parsed.data.city);
+    res.json(await storage.listEvents(parsed.data.limit ?? 8, cityId));
   });
 
-  app.get("/api/sources", async (_req, res) => {
-    const sources = await storage.listSources();
-    const counts = await storage.getPublishedCounts();
+  app.get("/api/sources", async (req, res) => {
+    const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : undefined);
+    const sources = await storage.listSources(cityId);
+    const counts = await storage.getPublishedCounts(cityId);
     const enriched = sources.map((s) => ({
       ...s,
       publishedCount: counts.get(s.name.toLowerCase()) ?? 0,
@@ -451,12 +487,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(enriched);
   });
 
-  app.get("/api/trending-tags", async (_req, res) => {
-    res.json(await storage.getTrendingTags(10));
+  app.get("/api/trending-tags", async (req, res) => {
+    const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : undefined);
+    res.json(await storage.getTrendingTags(10, cityId));
   });
 
-  app.get("/api/top-stories", async (_req, res) => {
-    res.json(await storage.getTopStories(6));
+  app.get("/api/top-stories", async (req, res) => {
+    const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : undefined);
+    res.json(await storage.getTopStories(6, cityId));
   });
 
   // ----- Ingestion pipeline -----
@@ -479,21 +517,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // Ingest run log (admin panel)
   app.get("/api/ingest/runs", async (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 40), 100);
-    res.json(await storage.listIngestRuns(limit));
+    const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : undefined);
+    res.json(await storage.listIngestRuns(limit, cityId));
   });
 
   // ----- Weather (public NWS API, no key) -----
-  // Cached server-side for 10 minutes so we don't hammer api.weather.gov.
-  let weatherCache: { fetchedAt: number; payload: any } | null = null;
-  app.get("/api/weather", async (_req, res) => {
+  // Cached server-side for 10 minutes per city.
+  const weatherCache = new Map<string, { fetchedAt: number; payload: any }>();
+  app.get("/api/weather", async (req, res) => {
     try {
+      const citySlug = typeof req.query.city === "string" ? req.query.city : "missoula";
+      const cityId = await resolveCityId(citySlug);
+      const city = cityId ? await storage.getCityById(cityId) : await storage.getCityBySlug("missoula");
+      const lat = city?.lat ?? 46.8721;
+      const lon = city?.lon ?? -113.9940;
+      const cacheKey = `${lat},${lon}`;
       const now = Date.now();
-      if (weatherCache && now - weatherCache.fetchedAt < 10 * 60 * 1000) {
-        return res.json(weatherCache.payload);
+      const cached = weatherCache.get(cacheKey);
+      if (cached && now - cached.fetchedAt < 10 * 60 * 1000) {
+        return res.json(cached.payload);
       }
-      const headers = { "User-Agent": "ZooTown/1.0 (missoula civic aggregator)", Accept: "application/geo+json" };
-      // Missoula, MT — use NWS station + grid endpoints. Lat/lon = 46.8721, -113.9940
-      const points = await fetch("https://api.weather.gov/points/46.8721,-113.9940", { headers }).then(r => r.json()).catch(() => null);
+      const headers = { "User-Agent": "ZooTown/1.0 (Montana civic aggregator)", Accept: "application/geo+json" };
+      const points = await fetch(`https://api.weather.gov/points/${lat},${lon}`, { headers }).then(r => r.json()).catch(() => null);
       const observationStationsUrl = points?.properties?.observationStations;
       const forecastUrl = points?.properties?.forecast;
       const alertsZone = points?.properties?.county; // county zone for alerts
@@ -542,8 +587,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           severity: f.properties?.severity ?? "Unknown",
         }));
       }
+      const locationLabel = city ? `${city.displayName}, ${city.state}` : "Missoula, MT";
+      const forecastLink = `https://forecast.weather.gov/MapClick.php?lat=${lat}&lon=${lon}`;
       const payload = {
-        location: "Missoula, MT",
+        location: locationLabel,
         temperatureF,
         conditionText,
         icon,
@@ -553,19 +600,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         low,
         alerts,
         source: "National Weather Service",
-        sourceUrl: "https://forecast.weather.gov/MapClick.php?lat=46.8721&lon=-113.9940",
+        sourceUrl: forecastLink,
         fetchedAt: new Date().toISOString(),
       };
-      weatherCache = { fetchedAt: now, payload };
+      weatherCache.set(cacheKey, { fetchedAt: now, payload });
       res.json(payload);
     } catch (err: any) {
       res.status(200).json({
-        location: "Missoula, MT",
+        location: "Montana",
         temperatureF: null,
         conditionText: "Unavailable",
         error: String(err?.message ?? err),
         source: "National Weather Service",
-        sourceUrl: "https://forecast.weather.gov/MapClick.php?lat=46.8721&lon=-113.9940",
+        sourceUrl: "https://forecast.weather.gov/",
         fetchedAt: new Date().toISOString(),
       });
     }
@@ -584,8 +631,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     submitterEmail: z.string().trim().email().optional().or(z.literal("")),
   });
 
-  app.get("/api/jobs", async (_req, res) => {
-    const jobs = await storage.listJobPosts("approved");
+  app.get("/api/jobs", async (req, res) => {
+    const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : undefined);
+    const jobs = await storage.listJobPosts("approved", cityId);
     res.json({ jobs, fetchedAt: new Date().toISOString() });
   });
 
@@ -594,11 +642,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.flatten() });
     }
-    // Soft word cap: ~1000 words
     const wordCount = parsed.data.body.split(/\s+/).filter(Boolean).length;
     if (wordCount > 1000) {
       return res.status(400).json({ error: { fieldErrors: { body: [`Please keep the description under 1000 words (you have ${wordCount}).`] } } });
     }
+    const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : (typeof (req.body as any).city === "string" ? (req.body as any).city : undefined));
     const job = await storage.createJobPost({
       title: parsed.data.title,
       business: parsed.data.business,
@@ -607,7 +655,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       pay: parsed.data.pay || null,
       body: parsed.data.body,
       submitterEmail: parsed.data.submitterEmail || null,
-    });
+      cityId: cityId ?? null,
+    } as any);
     res.status(201).json({ ok: true, id: job.id });
   });
 
@@ -652,11 +701,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // The front end polls this every 30s. It now reflects real ingestion activity
   // — the timestamp and count from the most recent ingest_runs row — rather than
   // the old "latest publishedAt" hack.
-  app.get("/api/pulse", async (_req, res) => {
-    const runs = await storage.listIngestRuns(12);
+  app.get("/api/pulse", async (req, res) => {
+    const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : undefined);
+    const runs = await storage.listIngestRuns(12, cityId);
     const lastRun = runs[0];
     const totalAddedRecently = runs.reduce((n, r) => n + r.added, 0);
-    const top = await storage.listStories({ desk: "all", limit: 1, modState: "approved" });
+    const top = await storage.listStories({ desk: "all", limit: 1, modState: "approved", cityId });
     res.json({
       latestPublishedAt: top.items[0]?.publishedAt ?? null,
       total: top.total,
@@ -675,7 +725,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ----- History stories -----
   app.get("/api/history", async (req, res) => {
     const desk = typeof req.query.desk === "string" ? req.query.desk : null;
-    const all = await storage.listHistoryStories();
+    const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : undefined);
+    const all = await storage.listHistoryStories(cityId);
     if (!desk) return res.json(all);
     res.json(all.filter((h) => (h.desk ?? "history") === desk));
   });

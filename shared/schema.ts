@@ -1,6 +1,28 @@
-import { pgTable, text, integer, serial, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, serial, boolean, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// Supported Montana cities. Each is a separate scope: news feed, sources,
+// calendar, history pool, jobs, admin all key off the city's slug.
+export const cities = pgTable("cities", {
+  id: serial("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  state: text("state").notNull().default("MT"),
+  lat: doublePrecision("lat"),
+  lon: doublePrecision("lon"),
+  countyName: text("county_name"),
+  nwsZone: text("nws_zone"),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(100),
+  createdAt: text("created_at").notNull(),
+});
+export type City = typeof cities.$inferSelect;
+export const CITY_SLUGS = [
+  "missoula", "billings", "great_falls", "bozeman", "butte",
+  "helena", "kalispell", "havre", "whitefish", "laurel",
+] as const;
+export type CitySlug = (typeof CITY_SLUGS)[number];
 
 // Desk identifiers — EXACT ORDER matters for UI tabs
 export const DESKS = ["city", "business", "crime", "sports", "health", "entertainment", "people", "history"] as const;
@@ -56,6 +78,8 @@ export const stories = pgTable("stories", {
   // Manual-review workflow: false = auto-published, true = admin-verified
   isReviewed: boolean("is_reviewed").notNull().default(false),
   reviewedAt: text("reviewed_at"),
+  // Multi-city: which city this story belongs to. 1 = Missoula (legacy default).
+  cityId: integer("city_id").references(() => cities.id),
 });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export type InsertStory = z.infer<typeof insertStorySchema>;
@@ -72,6 +96,7 @@ export const events = pgTable("events", {
   tag: text("tag"),
   desk: text("desk"),
   description: text("description"),
+  cityId: integer("city_id").references(() => cities.id),
 });
 export const insertEventSchema = createInsertSchema(events).omit({ id: true });
 export type InsertEvent = z.infer<typeof insertEventSchema>;
@@ -88,6 +113,7 @@ export const historyStories = pgTable("history_stories", {
   lastBumpedAt: text("last_bumped_at").notNull(),
   isVisible: boolean("is_visible").notNull().default(true),
   lastShownAt: text("last_shown_at"),
+  cityId: integer("city_id").references(() => cities.id),
 });
 export const insertHistoryStorySchema = createInsertSchema(historyStories).omit({ id: true });
 export type InsertHistoryStory = z.infer<typeof insertHistoryStorySchema>;
@@ -108,6 +134,7 @@ export const jobPosts = pgTable("job_posts", {
   state: text("state").$type<JobPostState>().notNull().default("pending"),
   submittedAt: text("submitted_at").notNull(),
   approvedAt: text("approved_at"),
+  cityId: integer("city_id").references(() => cities.id),
 });
 export const insertJobPostSchema = createInsertSchema(jobPosts).omit({ id: true, state: true, submittedAt: true, approvedAt: true });
 export type InsertJobPost = z.infer<typeof insertJobPostSchema>;
@@ -141,6 +168,7 @@ export const sources = pgTable("sources", {
   handle: text("handle"),
   platform: text("platform"),
   trustScore: integer("trust_score").notNull().default(50),
+  cityId: integer("city_id").references(() => cities.id),
 });
 export const insertSourceSchema = createInsertSchema(sources).omit({ id: true });
 export type InsertSource = z.infer<typeof insertSourceSchema>;
@@ -163,6 +191,7 @@ export const classificationRules = pgTable("classification_rules", {
   createdBy: text("created_by").notNull().default("admin"),
   hitCount: integer("hit_count").notNull().default(0),
   active: boolean("active").notNull().default(true),
+  cityId: integer("city_id").references(() => cities.id),
 });
 export const insertClassificationRuleSchema = createInsertSchema(classificationRules).omit({ id: true, hitCount: true });
 export type InsertClassificationRule = z.infer<typeof insertClassificationRuleSchema>;
@@ -180,6 +209,7 @@ export const ingestRuns = pgTable("ingest_runs", {
   duplicates: integer("duplicates").notNull().default(0),
   clustered: integer("clustered").notNull().default(0),
   errors: integer("errors").notNull().default(0),
+  cityId: integer("city_id").references(() => cities.id),
   message: text("message"),
 });
 export type IngestRun = typeof ingestRuns.$inferSelect;

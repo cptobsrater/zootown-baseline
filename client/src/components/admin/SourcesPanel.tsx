@@ -4,6 +4,7 @@ import type { Source } from "@shared/schema";
 
 type SourceWithCount = Source & { publishedCount: number };
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAdminCity } from "@/lib/admin-city-context";
 import { relativeTime } from "@/lib/format";
 import { AddSourceForm } from "@/components/admin/AddSourceForm";
 import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
@@ -22,8 +23,14 @@ import {
 } from "lucide-react";
 
 export function SourcesPanel() {
+  const { currentCity } = useAdminCity();
+  const citySlug = currentCity.slug;
   const { data: sources, isLoading } = useQuery<SourceWithCount[]>({
-    queryKey: ["/api/sources"],
+    queryKey: ["/api/sources", citySlug],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/sources?city=${citySlug}`);
+      return (await res.json()) as SourceWithCount[];
+    },
     refetchInterval: 15_000,
   });
 

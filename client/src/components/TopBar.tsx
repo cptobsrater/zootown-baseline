@@ -1,8 +1,10 @@
 import { Wordmark } from "./Logo";
 import { useTheme } from "@/lib/theme";
-import { Search, Sun, Moon, Info, MapPin } from "lucide-react";
+import { Search, Sun, Moon, Info } from "lucide-react";
 import { type DeskId, DESK_META } from "@/lib/format";
 import { Link, useLocation } from "wouter";
+import { CitySwitcher } from "./CitySwitcher";
+import { useCity } from "@/lib/city-context";
 
 interface Props {
   desk: "all" | DeskId;
@@ -35,7 +37,9 @@ export function TopBar({
 }: Props) {
   const { theme, toggle } = useTheme();
   const [location, navigate] = useLocation();
-  const onHome = location === "/" || location === "";
+  const { currentCity } = useCity();
+  // Home is now the city root: /missoula, /billings, etc.
+  const onHome = /^\/[a-z_]+\/?$/i.test(location);
 
   // When user clicks a desk tab from a non-home page (Calendar, Jobs, Admin),
   // route them home and pre-select the desk via hash search-param so the
@@ -50,7 +54,7 @@ export function TopBar({
       if (typeof window !== "undefined") {
         (window as any).__pendingDesk = id;
       }
-      navigate("/");
+      navigate(`/${currentCity.slug}`);
     }
   }
 
@@ -59,13 +63,12 @@ export function TopBar({
       <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-5 md:px-6 lg:py-3.5">
         {/* Left: logo + location */}
         <div className="flex items-center gap-3">
-          <Link href="/" data-testid="link-home" className="shrink-0">
+          <Link href={`/${currentCity.slug}`} data-testid="link-home" className="shrink-0">
             <Wordmark />
           </Link>
-          <span className="hidden md:inline-flex items-center gap-1 rounded-full border border-border bg-secondary/50 px-2.5 py-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-            <MapPin className="h-3 w-3" />
-            Missoula, MT
-          </span>
+          <div className="hidden md:block">
+            <CitySwitcher />
+          </div>
         </div>
 
         {/* Right: search + actions */}
@@ -76,7 +79,7 @@ export function TopBar({
               type="search"
               value={query}
               onChange={(e) => onQueryChange(e.target.value)}
-              placeholder="Search Missoula…"
+              placeholder={`Search ${currentCity.displayName}…`}
               aria-label="Search"
               data-testid="input-search"
               className="w-full rounded-md border border-input bg-background/80 py-2 pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground/80 focus:border-ring focus:ring-2 focus:ring-ring/25"
@@ -134,14 +137,14 @@ export function TopBar({
           })}
           <li className="ml-auto hidden md:flex items-center gap-1">
             <Link
-              href="/calendar"
+              href={`/${currentCity.slug}/calendar`}
               className="whitespace-nowrap rounded-md px-3 py-2 text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground hover-elevate"
               data-testid="link-calendar"
             >
               Calendar
             </Link>
             <Link
-              href="/jobs"
+              href={`/${currentCity.slug}/jobs`}
               className="whitespace-nowrap rounded-md px-3 py-2 text-xs font-mono uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground hover-elevate"
               data-testid="link-jobs"
             >

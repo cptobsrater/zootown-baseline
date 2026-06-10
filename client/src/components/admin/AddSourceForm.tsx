@@ -6,6 +6,7 @@ import {
   SOURCE_CATEGORIES,
 } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAdminCity } from "@/lib/admin-city-context";
 import { Loader2, Plus, FlaskConical, X, ExternalLink } from "lucide-react";
 
 type FeedType = (typeof FEED_TYPES)[number];
@@ -30,6 +31,8 @@ interface Props {
 }
 
 export function AddSourceForm({ onClose }: Props) {
+  const { currentCity } = useAdminCity();
+  const citySlug = currentCity.slug;
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [feedUrl, setFeedUrl] = useState("");
@@ -56,6 +59,7 @@ export function AddSourceForm({ onClose }: Props) {
       desks,
       cadenceMinutes,
       category,
+      city: citySlug,
     };
   }
 
@@ -101,7 +105,7 @@ export function AddSourceForm({ onClose }: Props) {
     setSaving(true);
     try {
       await apiRequest("POST", "/api/admin/sources", buildSpec());
-      queryClient.invalidateQueries({ queryKey: ["/api/sources"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/sources", citySlug] });
       onClose();
     } catch (err: any) {
       setError(err?.message ?? "Save failed.");

@@ -11,6 +11,8 @@ import {
 } from "@/lib/queryClient";
 import { Wordmark } from "@/components/Logo";
 import { DeskBadge } from "@/components/DeskBadge";
+import { AdminCityProvider, useAdminCity } from "@/lib/admin-city-context";
+import { AdminCitySwitcher } from "@/components/admin/AdminCitySwitcher";
 import { SourcesPanel } from "@/components/admin/SourcesPanel";
 import { IngestLogPanel } from "@/components/admin/IngestLogPanel";
 import { AdminLogin } from "@/components/admin/AdminLogin";
@@ -65,21 +67,28 @@ export default function AdminPage() {
     return <AdminLogin />;
   }
 
-  return <AdminInner />;
+  return (
+    <AdminCityProvider>
+      <AdminInner />
+    </AdminCityProvider>
+  );
 }
 
 function AdminInner() {
+  const { currentCity } = useAdminCity();
+  const citySlug = currentCity.slug;
   const [section, setSection] = useState<AdminSection>("inbox");
   const [tab, setTab] = useState<ModState>("draft");
   const [editing, setEditing] = useState<Story | null>(null);
   const [deleting, setDeleting] = useState<Story | null>(null);
 
   const { data, isLoading } = useQuery<StoriesPage>({
-    queryKey: ["/api/stories", { modState: tab }],
+    queryKey: ["/api/stories", { modState: tab, city: citySlug }],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set("modState", tab);
       p.set("limit", "30");
+      p.set("city", citySlug);
       const res = await apiRequest("GET", `/api/stories?${p.toString()}`);
       return (await res.json()) as StoriesPage;
     },
@@ -126,7 +135,7 @@ function AdminInner() {
         <div className="mx-auto flex w-full max-w-[1200px] items-center justify-between gap-4 px-4 py-3 md:px-6">
           <div className="flex items-center gap-3">
             <Link
-              href="/"
+              href={`/${citySlug}`}
               className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate"
               data-testid="link-back"
             >
@@ -134,6 +143,7 @@ function AdminInner() {
               Back
             </Link>
             <Wordmark />
+            <AdminCitySwitcher />
           </div>
           <div className="flex items-center gap-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-destructive/30 bg-destructive/10 px-2.5 py-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-destructive">
@@ -171,7 +181,7 @@ function AdminInner() {
               {section === "moderation" &&
                 "Legacy draft/approved/rejected workflow. The new Inbox is what you'll mostly use."}
               {section === "sources" &&
-                "Every watched Missoula source. Add new sources with a live-test preview, run on demand, or remove sources that aren't pulling their weight."}
+                `Every watched ${currentCity.displayName} source. Add new sources with a live-test preview, run on demand, or remove sources that aren't pulling their weight.`}
               {section === "log" &&
                 "Every ingestion run the scheduler has performed — live fetches, fixtures fallbacks, dedupes, and cross-source clusters. Updates every 10 seconds."}
               {section === "patterns" &&

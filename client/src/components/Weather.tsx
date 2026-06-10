@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useCity } from "@/lib/city-context";
 import {
   Cloud,
   CloudRain,
@@ -41,10 +42,12 @@ function pickIcon(condition: string) {
 }
 
 export function Weather() {
+  const { currentCity } = useCity();
+  const citySlug = currentCity.slug;
   const { data, isLoading, isError } = useQuery<WeatherResponse>({
-    queryKey: ["/api/weather"],
+    queryKey: ["/api/weather", citySlug],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/weather");
+      const res = await apiRequest("GET", `/api/weather?city=${citySlug}`);
       return (await res.json()) as WeatherResponse;
     },
     refetchInterval: 10 * 60 * 1000, // 10 min
@@ -74,7 +77,7 @@ export function Weather() {
       <div className="border-b border-border bg-secondary/30">
         <div className="mx-auto flex w-full max-w-[1400px] items-center gap-2 px-4 py-2 text-xs text-muted-foreground md:px-6">
           <MapPin className="h-3.5 w-3.5" />
-          <span>Missoula, MT — weather temporarily unavailable</span>
+          <span>{currentCity.displayName}, {currentCity.state} — weather temporarily unavailable</span>
           <a
             href="https://forecast.weather.gov/MapClick.php?lat=46.8721&lon=-113.994"
             target="_blank"
@@ -117,7 +120,7 @@ export function Weather() {
             {data.conditionText}
           </span>
           <span className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-muted-foreground">
-            · Missoula, MT
+            · {currentCity.displayName}, {currentCity.state}
           </span>
         </div>
 

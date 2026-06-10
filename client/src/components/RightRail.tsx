@@ -3,6 +3,8 @@ import type { Story, Source } from "@shared/schema";
 import { type DeskId, relativeTime } from "@/lib/format";
 import { DeskBadge } from "./DeskBadge";
 import { Tag, Radio } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import { useCity } from "@/lib/city-context";
 
 interface Props {
   onOpenStory: (s: Story) => void;
@@ -11,11 +13,29 @@ interface Props {
 }
 
 export function RightRail({ onOpenStory, onSelectTag, onOpenSources }: Props) {
-  const top = useQuery<Story[]>({ queryKey: ["/api/top-stories"] });
-  const tags = useQuery<Array<{ tag: string; count: number }>>({
-    queryKey: ["/api/trending-tags"],
+  const { currentCity } = useCity();
+  const citySlug = currentCity.slug;
+  const top = useQuery<Story[]>({
+    queryKey: ["/api/top-stories", citySlug],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/top-stories?city=${citySlug}`);
+      return (await res.json()) as Story[];
+    },
   });
-  const sources = useQuery<Source[]>({ queryKey: ["/api/sources"] });
+  const tags = useQuery<Array<{ tag: string; count: number }>>({
+    queryKey: ["/api/trending-tags", citySlug],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/trending-tags?city=${citySlug}`);
+      return (await res.json()) as Array<{ tag: string; count: number }>;
+    },
+  });
+  const sources = useQuery<Source[]>({
+    queryKey: ["/api/sources", citySlug],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/sources?city=${citySlug}`);
+      return (await res.json()) as Source[];
+    },
+  });
 
   return (
     <aside className="space-y-6" aria-label="Right rail">
@@ -119,7 +139,7 @@ export function RightRail({ onOpenStory, onSelectTag, onOpenSources }: Props) {
         </div>
         <div className="text-xs text-muted-foreground leading-relaxed">
           Monitoring <span className="text-foreground font-medium">{sources.data?.length ?? 0}</span>{" "}
-          Missoula sources across local news, official civic channels, and community calendars.
+          {currentCity.displayName} sources across local news, official civic channels, and community calendars.
         </div>
         <button
           onClick={onOpenSources}

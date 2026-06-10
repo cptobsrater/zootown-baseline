@@ -1,0 +1,864 @@
+{
+  "billings": {
+    "displayName": "Billings",
+    "lat": 45.7833,
+    "lon": -108.5007,
+    "countyName": "Yellowstone County",
+    "nwsGridUrl": "https://api.weather.gov/points/45.7833,-108.5007",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC111",
+    "nwsOffice": "BYZ",
+    "sources": [
+      {
+        "name": "Billings Gazette",
+        "url": "https://billingsgazette.com/",
+        "feedUrl": "https://billingsgazette.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "KTVQ Q2 News (CBS)",
+        "url": "https://www.ktvq.com/",
+        "feedUrl": "https://www.ktvq.com/news.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "KULR-8 News (NBC)",
+        "url": "https://kulr8.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Lee Enterprises RSS pattern blocked; use HTML scrape or app API"
+      },
+      {
+        "name": "Yellowstone Public Radio (YPR)",
+        "url": "https://www.ypradio.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "NPR affiliate for Billings/Laurel/Bozeman region; feed URL not publicly discoverable via standard RSS path"
+      },
+      {
+        "name": "ABC/Fox Montana (montanarightnow.com)",
+        "url": "https://www.montanarightnow.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Statewide outlet based in Billings; covers Great Falls, Helena, Bozeman. KTVQ/KFBB/KXLF parent."
+      },
+      {
+        "name": "City of Billings — Official Calendar",
+        "url": "https://www.billingsmt.gov/calendar.aspx",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Billings Chamber of Commerce Events",
+        "url": "https://business.billingschamber.com/events",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Yellowstone County Government",
+        "url": "https://www.yellowstonecountymt.gov/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Billings Public Schools",
+        "url": "https://www.billingsschools.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "MSU Billings — News & Events",
+        "url": "https://www.msubillings.edu/news/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city",
+        "notes": "MSU-Billings is the primary four-year university in Billings"
+      }
+    ]
+  },
+  "great_falls": {
+    "displayName": "Great Falls",
+    "lat": 47.5002,
+    "lon": -111.3008,
+    "countyName": "Cascade County",
+    "nwsGridUrl": "https://api.weather.gov/points/47.5002,-111.3008",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC013",
+    "nwsOffice": "TFX",
+    "sources": [
+      {
+        "name": "Great Falls Tribune",
+        "url": "https://www.greatfallstribune.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Gannett/USA Today property; standard RSS path returns 404 and robots disallow crawl. HTML scraping or Gannett API required."
+      },
+      {
+        "name": "KRTV Great Falls (CBS)",
+        "url": "https://www.krtv.com/",
+        "feedUrl": "https://www.krtv.com/news.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Feed resolves; XML declaration not shown in fetched content but feed entries present"
+      },
+      {
+        "name": "KFBB / ABC Fox Montana Great Falls",
+        "url": "https://www.kfbb.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "ABC/Fox affiliate for Great Falls; news served via montanarightnow.com platform"
+      },
+      {
+        "name": "Montana Public Radio (MTPR)",
+        "url": "https://www.mtpr.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "NPR affiliate covering Great Falls, Helena, Missoula, Kalispell, Havre and statewide"
+      },
+      {
+        "name": "Great Falls Area Chamber of Commerce — Events",
+        "url": "https://www.greatfallschamber.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Visit Great Falls Montana — Events",
+        "url": "https://visitgreatfallsmontana.org/findevents/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "NonStop Local Montana — Calendar",
+        "url": "https://www.montanarightnow.com/calendar/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Great Falls Public Schools",
+        "url": "https://gfps.k12.mt.us/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Cascade County Government",
+        "url": "https://cascade.mt.gov/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      }
+    ]
+  },
+  "bozeman": {
+    "displayName": "Bozeman",
+    "lat": 45.6770,
+    "lon": -111.0429,
+    "countyName": "Gallatin County",
+    "nwsGridUrl": "https://api.weather.gov/points/45.6770,-111.0429",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC031",
+    "nwsOffice": "TFX",
+    "sources": [
+      {
+        "name": "Bozeman Daily Chronicle",
+        "url": "https://www.bozemandailychronicle.com/",
+        "feedUrl": "https://www.bozemandailychronicle.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "KBZK Bozeman (CBS)",
+        "url": "https://www.kbzk.com/",
+        "feedUrl": "https://www.kbzk.com/news.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Yellowstone Public Radio (YPR)",
+        "url": "https://www.ypradio.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "NPR affiliate; serves Bozeman among its coverage area"
+      },
+      {
+        "name": "The BoZone — Bozeman Events Calendar",
+        "url": "https://bozone.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment",
+        "notes": "Long-running independent Bozeman events guide; WordPress-based but feed URL not accessible"
+      },
+      {
+        "name": "Downtown Bozeman Events (DBA)",
+        "url": "https://downtownbozeman.org/events/dba-events",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Bozeman Chamber of Commerce — Events",
+        "url": "https://bozemanchamber.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "City of Bozeman",
+        "url": "https://www.bozeman.net/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "MSU Bozeman — Calendar of Events",
+        "url": "https://www.montana.edu/calendar/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city",
+        "notes": "Montana State University main campus in Bozeman"
+      },
+      {
+        "name": "Bozeman School District 7",
+        "url": "https://www.bsd7.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Montana Free Press",
+        "url": "https://montanafreepress.org/",
+        "feedUrl": "https://montanafreepress.org/feed/",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Nonprofit statewide investigative outlet; Bozeman-headquartered; strong coverage of Gallatin Valley"
+      }
+    ]
+  },
+  "butte": {
+    "displayName": "Butte",
+    "lat": 46.0038,
+    "lon": -112.5348,
+    "countyName": "Silver Bow County",
+    "nwsGridUrl": "https://api.weather.gov/points/46.0038,-112.5348",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC093",
+    "nwsOffice": "MSO",
+    "sources": [
+      {
+        "name": "Montana Standard",
+        "url": "https://mtstandard.com/",
+        "feedUrl": "https://mtstandard.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "KXLF News (CBS/Montana Television Network)",
+        "url": "https://www.kxlf.com/",
+        "feedUrl": "https://www.kxlf.com/index.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "CBS Butte; local news produced from KBZK Bozeman studios; feed resolves with article listings"
+      },
+      {
+        "name": "Montana Public Radio (MTPR)",
+        "url": "https://www.mtpr.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "City & County of Butte-Silver Bow — Official Calendar",
+        "url": "https://www.co.silverbow.mt.us/Calendar.aspx",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Visit Butte Montana — Events",
+        "url": "https://visitbutte.com/events/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Main Street Uptown Butte",
+        "url": "https://www.mainstreetbutte.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Butte School District No. 1",
+        "url": "https://www.bsd1.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Montana Tech — News & Events",
+        "url": "https://www.mtech.edu/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city",
+        "notes": "Montana Technological University (Montana Tech) is the flagship university in Butte"
+      }
+    ]
+  },
+  "helena": {
+    "displayName": "Helena",
+    "lat": 46.5958,
+    "lon": -112.0270,
+    "countyName": "Lewis and Clark County",
+    "nwsGridUrl": "https://api.weather.gov/points/46.5958,-112.0270",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC049",
+    "nwsOffice": "TFX",
+    "sources": [
+      {
+        "name": "Helena Independent Record",
+        "url": "https://helenair.com/",
+        "feedUrl": "https://helenair.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Lee Enterprises daily paper; URL is helenair.com"
+      },
+      {
+        "name": "KXLH News Helena (ABC/Fox Montana)",
+        "url": "https://www.kxlh.com/",
+        "feedUrl": "https://www.kxlh.com/news.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Feed returns RSS 2.0 with items; some malformed content around the XML but parseable"
+      },
+      {
+        "name": "KTVH Helena (NBC/Scripps)",
+        "url": "https://www.ktvh.com/",
+        "feedUrl": "https://www.ktvh.com/news.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Scripps NBC affiliate; feed entries confirmed present"
+      },
+      {
+        "name": "Montana Public Radio (MTPR)",
+        "url": "https://www.mtpr.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Helena Area Chamber of Commerce — Events",
+        "url": "https://helenachamber.com/events/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Visit Helena — Events",
+        "url": "https://helenamt.com/helena-events/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "City of Helena — Official Website",
+        "url": "https://www.helenamt.gov/Home",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Helena Civic Center Events",
+        "url": "https://www.helenamt.gov/Community/Civic-Center/Civic-Center-Events",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Carroll College — Events",
+        "url": "https://www.carroll.edu/news-events/events",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "entertainment",
+        "notes": "Carroll College is a four-year liberal arts college in Helena"
+      },
+      {
+        "name": "Helena Public Schools",
+        "url": "https://helenaschools.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      }
+    ]
+  },
+  "kalispell": {
+    "displayName": "Kalispell",
+    "lat": 48.1920,
+    "lon": -114.3168,
+    "countyName": "Flathead County",
+    "nwsGridUrl": "https://api.weather.gov/points/48.1920,-114.3168",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC029",
+    "nwsOffice": "MSO",
+    "sources": [
+      {
+        "name": "Daily Inter Lake",
+        "url": "https://dailyinterlake.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Largest independent newspaper in Montana; based in Kalispell; serves Flathead Valley and Whitefish. RSS at /search/?f=rss pattern blocked by robots; use HTML or check direct path /news/rss.xml (returned 404)."
+      },
+      {
+        "name": "Flathead Beacon",
+        "url": "https://flatheadbeacon.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Free digital news site covering Flathead Valley (Kalispell, Whitefish, Columbia Falls). WordPress-based but /feed/ returns incomplete content."
+      },
+      {
+        "name": "NBC Montana / KCFW (NBC Kalispell)",
+        "url": "https://nbcmontana.com/",
+        "feedUrl": "https://nbcmontana.com/news.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Sinclair-owned NBC Montana; KCFW Kalispell is the Flathead Valley station; RSS confirmed valid."
+      },
+      {
+        "name": "Montana Public Radio (MTPR)",
+        "url": "https://www.mtpr.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Kalispell Chamber of Commerce — Events",
+        "url": "https://kalispellchamber.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "City of Kalispell — Official Website",
+        "url": "https://www.kalispell.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Flathead County Government",
+        "url": "https://flatheadcounty.gov/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Flathead Valley Community College — Events",
+        "url": "https://www.fvcc.edu/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "entertainment",
+        "notes": "FVCC is the community college serving Kalispell and greater Flathead Valley"
+      },
+      {
+        "name": "Kalispell Public Schools (SD5)",
+        "url": "https://www.sd5.k12.mt.us/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      }
+    ]
+  },
+  "havre": {
+    "displayName": "Havre",
+    "lat": 48.5500,
+    "lon": -109.6800,
+    "countyName": "Hill County",
+    "nwsGridUrl": "https://api.weather.gov/points/48.5500,-109.6800",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC041",
+    "nwsOffice": "TFX",
+    "sources": [
+      {
+        "name": "Havre Daily News (Havre Weekly Chronicle)",
+        "url": "https://www.havredailynews.com/",
+        "feedUrl": "https://www.havredailynews.com/rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Rebranded as Havre Weekly Chronicle (domain still havredailynews.com); RSS feed confirmed valid with recent stories."
+      },
+      {
+        "name": "Montana Public Radio (MTPR)",
+        "url": "https://www.mtpr.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "NPR affiliate; serves north-central Montana including Havre"
+      },
+      {
+        "name": "Havre Area Chamber of Commerce — Events",
+        "url": "https://www.havrechamber.com/events-calendar",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Havre Area Events",
+        "url": "https://www.havreareaevents.net/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment",
+        "notes": "Active community events site for the Havre area; no RSS but regularly updated"
+      },
+      {
+        "name": "City of Havre — Official Website",
+        "url": "https://www.ci.havre.mt.us/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "MSU-Northern — News & Events",
+        "url": "https://www.msun.edu/news/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "entertainment",
+        "notes": "Montana State University Northern is the four-year university in Havre"
+      },
+      {
+        "name": "Havre Public Schools",
+        "url": "https://www.blueponyk12.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      }
+    ]
+  },
+  "whitefish": {
+    "displayName": "Whitefish",
+    "lat": 48.4110,
+    "lon": -114.3358,
+    "countyName": "Flathead County",
+    "nwsGridUrl": "https://api.weather.gov/points/48.4110,-114.3358",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC029",
+    "nwsOffice": "MSO",
+    "sources": [
+      {
+        "name": "Whitefish Pilot",
+        "url": "https://www.whitefishpilot.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Award-winning weekly newspaper for Whitefish, MT; published by Daily Inter Lake. RSS feed not found (neither /news/rss.xml nor TNCMS pattern resolved)."
+      },
+      {
+        "name": "Daily Inter Lake",
+        "url": "https://dailyinterlake.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Regional daily for Flathead Valley; covers Whitefish regularly. RSS blocked by robots."
+      },
+      {
+        "name": "Flathead Beacon",
+        "url": "https://flatheadbeacon.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Free digital outlet covering Flathead Valley; strong Whitefish coverage."
+      },
+      {
+        "name": "NBC Montana / KCFW",
+        "url": "https://nbcmontana.com/",
+        "feedUrl": "https://nbcmontana.com/news.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Whitefish Chamber of Commerce — Events",
+        "url": "https://business.whitefishchamber.org/events",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Explore Whitefish — Events Calendar",
+        "url": "https://explorewhitefish.com/events",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "City of Whitefish — Official Calendar",
+        "url": "https://www.cityofwhitefish.gov/Calendar.aspx",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "Daily Inter Lake — Events (Whitefish/Flathead)",
+        "url": "https://dailyinterlake.com/events/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      }
+    ]
+  },
+  "laurel": {
+    "displayName": "Laurel",
+    "lat": 45.6672,
+    "lon": -108.7707,
+    "countyName": "Yellowstone County",
+    "nwsGridUrl": "https://api.weather.gov/points/45.6672,-108.7707",
+    "nwsCountyZone": "https://api.weather.gov/zones/county/MTC111",
+    "nwsOffice": "BYZ",
+    "sources": [
+      {
+        "name": "Laurel Outlook",
+        "url": "https://www.laureloutlook.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Weekly newspaper established 1904; covers Laurel, Park City, Joliet. Active as of fetch. No discoverable RSS feed."
+      },
+      {
+        "name": "Billings Gazette",
+        "url": "https://billingsgazette.com/",
+        "feedUrl": "https://billingsgazette.com/search/?f=rss&t=article&l=50&s=start_time&sd=desc",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Primary regional daily covering Laurel/Yellowstone County as part of greater Billings area"
+      },
+      {
+        "name": "KTVQ Q2 News (CBS Billings)",
+        "url": "https://www.ktvq.com/",
+        "feedUrl": "https://www.ktvq.com/news.rss",
+        "feedType": "rss",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Billings TV station with coverage of Laurel/Yellowstone County area"
+      },
+      {
+        "name": "Yellowstone Public Radio (YPR)",
+        "url": "https://www.ypradio.org/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "NPR affiliate headquartered in Billings; covers Laurel as part of its service area"
+      },
+      {
+        "name": "Stillwater County News",
+        "url": "https://www.stillwatercountynews.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Local News",
+        "category": "news",
+        "defaultDesk": "city",
+        "notes": "Weekly paper based in Columbus, MT; covers adjacent Stillwater County; relevant for broader Laurel-region coverage"
+      },
+      {
+        "name": "City of Laurel — Official Website",
+        "url": "https://cityoflaurelmontana.com/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      },
+      {
+        "name": "City of Laurel — Calendar",
+        "url": "https://cityoflaurelmontana.com/calendar",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Laurel Chamber of Commerce — Events",
+        "url": "https://www.laurelmontana.org/community-calendar/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Laurel Main Street — Signature Events",
+        "url": "https://laurelmainstreet.com/pages/signature-events",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Community Calendar",
+        "category": "calendars",
+        "defaultDesk": "entertainment"
+      },
+      {
+        "name": "Laurel Public Schools",
+        "url": "https://www.laurel.k12.mt.us/",
+        "feedUrl": null,
+        "feedType": "html",
+        "sourceType": "Official",
+        "category": "official",
+        "defaultDesk": "city"
+      }
+    ]
+  }
+}

@@ -9,6 +9,8 @@ import {
   AtSign,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useCity } from "@/lib/city-context";
 
 interface Props {
   open: boolean;
@@ -29,13 +31,13 @@ const CATEGORY_META: Record<
   },
   news: {
     label: "News",
-    blurb: "Local newsrooms covering Missoula. We summarize and link to the original article.",
+    blurb: "Local newsrooms covering your city. We summarize and link to the original article.",
     Icon: Newspaper,
   },
   calendars: {
     label: "Calendars",
     blurb:
-      "Community event boards we monitor for upcoming things to do — including Facebook Events and MissoulaEvents.com.",
+      "Community event boards we monitor for upcoming things to do — listings, ticketed events, civic meetings.",
     Icon: CalendarDays,
   },
   social: {
@@ -47,7 +49,16 @@ const CATEGORY_META: Record<
 };
 
 export function SourcesDialog({ open, onOpenChange }: Props) {
-  const { data } = useQuery<Source[]>({ queryKey: ["/api/sources"], enabled: open });
+  const { currentCity } = useCity();
+  const citySlug = currentCity.slug;
+  const { data } = useQuery<Source[]>({
+    queryKey: ["/api/sources", citySlug],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/sources?city=${citySlug}`);
+      return (await res.json()) as Source[];
+    },
+    enabled: open,
+  });
   const sources = data ?? [];
   const grouped = sources.reduce<Record<SourceCategory, Source[]>>(
     (acc, s) => {
@@ -71,7 +82,7 @@ export function SourcesDialog({ open, onOpenChange }: Props) {
               <strong className="text-foreground font-semibold">
                 AI-assisted local aggregator
               </strong>{" "}
-              — not a traditional newsroom. We monitor trusted Missoula-area sources, rewrite
+              — not a traditional newsroom. We monitor trusted local sources, rewrite
               updates into short feed posts, and always link back to the original. Sensitive topics
               are routed to human review before publishing. Sources are organized into four
               categories below.

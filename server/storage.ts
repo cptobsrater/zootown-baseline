@@ -5,7 +5,7 @@
  * Tables are created via Supabase migrations (managed separately) — this
  * module does NOT create tables; it only reads/writes.
  */
-import { stories, events, sources, ingestRuns, storySources, storyEdits, historyStories, classificationRules, meta } from "../shared/schema.js";
+import { stories, events, sources, ingestRuns, storySources, storyEdits, historyStories, classificationRules, meta, cities } from "../shared/schema.js";
 import type {
   Story,
   InsertStory,
@@ -23,6 +23,7 @@ import type {
   InsertJobPost,
   JobPostState,
   ClassificationRule,
+  City,
 } from "../shared/schema.js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -56,6 +57,7 @@ export interface StoryQuery {
   modState?: "all" | "draft" | "approved" | "rejected";
   isReviewed?: boolean;          // filter by admin-review state
   includeEvents?: boolean;       // legacy flag kept for compat; events live as desk-tagged stories now
+  cityId?: number;               // multi-city: scope to this city. Omitted = Missoula default.
 }
 
 // ------ Row mappers (snake_case DB rows → camelCase types) ------
@@ -85,11 +87,16 @@ function rowToStory(r: any): Story {
     endsAt: r.ends_at ?? r.endsAt ?? null,
     isReviewed: r.is_reviewed === true || r.is_reviewed === 1 || r.isReviewed === true,
     reviewedAt: r.reviewed_at ?? r.reviewedAt ?? null,
+    cityId: r.city_id ?? r.cityId ?? null,
   };
 }
 
-// Convert a stories row (with desk='events') to the public EventItem shape.
 function rowToEventFromStory(r: any): EventItem {
+  // Convert a stories row to the EventItem shape used by the calendar.
+  // Note: cityId is included so the calendar can filter / display per-city.
+  return _rowToEventFromStory(r);
+}
+function _rowToEventFromStory(r: any): EventItem {
   return {
     id: r.id,
     title: r.headline,
@@ -101,6 +108,7 @@ function rowToEventFromStory(r: any): EventItem {
     tag: "Event",
     desk: r.desk,
     description: r.summary ?? null,
+    cityId: r.city_id ?? r.cityId ?? null,
   };
 }
 function rowToEvent(r: any): EventItem {
@@ -115,6 +123,7 @@ function rowToEvent(r: any): EventItem {
     tag: r.tag ?? null,
     desk: r.desk ?? null,
     description: r.description ?? null,
+    cityId: r.city_id ?? r.cityId ?? null,
   };
 }
 
@@ -140,6 +149,7 @@ function rowToSource(r: any): Source {
     handle: r.handle ?? null,
     platform: r.platform ?? null,
     trustScore: r.trust_score ?? r.trustScore ?? 50,
+    cityId: r.city_id ?? r.cityId ?? null,
   };
 }
 
@@ -157,6 +167,7 @@ function rowToIngestRun(r: any): IngestRun {
     clustered: r.clustered,
     errors: r.errors,
     message: r.message ?? null,
+    cityId: r.city_id ?? r.cityId ?? null,
   };
 }
 
@@ -195,6 +206,7 @@ function rowToHistoryStory(r: any): HistoryStory {
     lastBumpedAt: r.last_bumped_at ?? r.lastBumpedAt,
     isVisible: r.is_visible === true || r.is_visible === 1 || r.isVisible === true || r.is_visible == null,
     lastShownAt: r.last_shown_at ?? r.lastShownAt ?? null,
+    cityId: r.city_id ?? r.cityId ?? null,
   };
 }
 
@@ -211,6 +223,7 @@ function rowToRule(r: any): ClassificationRule {
     createdBy: r.created_by ?? r.createdBy ?? "admin",
     hitCount: r.hit_count ?? r.hitCount ?? 0,
     active: r.active === true || r.active === 1,
+    cityId: r.city_id ?? r.cityId ?? null,
   };
 }
 
@@ -227,6 +240,7 @@ function rowToJobPost(r: any): JobPost {
     state: r.state,
     submittedAt: r.submitted_at ?? r.submittedAt,
     approvedAt: r.approved_at ?? r.approvedAt ?? null,
+    cityId: r.city_id ?? r.cityId ?? null,
   };
 }
 
@@ -256,15 +270,20 @@ function jaccard(a: Set<string>, b: Set<string>) {
 
 // ------ Storage interface ------
 export interface IStorage {
+  // Multi-city helpers
+  listCities(): Promise<City[]>;
+  getCityBySlug(slug: string): Promise<City | undefined>;
+  getCityById(id: number): Promise<City | undefined>;
+
   listStories(q: StoryQuery): Promise<{ items: Story[]; nextCursor: number | null; total: number }>;
   getStory(id: number): Promise<Story | undefined>;
   createStory(input: InsertStory): Promise<Story>;
   updateStoryModState(id: number, modState: ModState): Promise<Story | undefined>;
-  listEvents(limit?: number): Promise<EventItem[]>;
+  listEvents(limit?: number, cityId?: number): Promise<EventItem[]>;
   findEventByUrl(url: string): Promise<EventItem | undefined>;
   createEvent(input: InsertEvent): Promise<EventItem>;
-  listSources(): Promise<Source[]>;
-  getPublishedCounts(): Promise<Map<string, number>>;
+  listSources(cityId?: number): Promise<Source[]>;
+  getPublishedCounts(cityId?: number): Promise<Map<string, number>>;
   getSource(id: number): Promise<Source | undefined>;
   updateSourceHealth(id: number, fields: { lastCheckedAt: string; lastStatus: string; lastMode: string | null; lastError: string | null; lastItems: number }): Promise<void>;
   findStoryByCanonicalUrl(canonicalUrl: string): Promise<Story | undefined>;
@@ -273,9 +292,9 @@ export interface IStorage {
   listStorySources(storyId: number): Promise<StorySource[]>;
   countStorySources(storyId: number): Promise<number>;
   recordIngestRun(run: Omit<IngestRun, "id">): Promise<IngestRun>;
-  listIngestRuns(limit?: number): Promise<IngestRun[]>;
-  getTrendingTags(limit?: number): Promise<Array<{ tag: string; count: number }>>;
-  getTopStories(limit?: number): Promise<Story[]>;
+  listIngestRuns(limit?: number, cityId?: number): Promise<IngestRun[]>;
+  getTrendingTags(limit?: number, cityId?: number): Promise<Array<{ tag: string; count: number }>>;
+  getTopStories(limit?: number, cityId?: number): Promise<Story[]>;
   updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt" | "onCalendar">>): Promise<Story | undefined>;
   markStoryReviewed(id: number, reviewed: boolean): Promise<Story | undefined>;
   deleteStory(id: number): Promise<boolean>;
@@ -294,8 +313,8 @@ export interface IStorage {
   updateClassificationRule(id: number, patch: Partial<Omit<ClassificationRule, "id">>): Promise<ClassificationRule | null>;
   deleteClassificationRule(id: number): Promise<boolean>;
   incrementRuleHitCount(id: number): Promise<void>;
-  listHistoryStories(): Promise<HistoryStory[]>;
-  listAllHistoryStoriesForDesk(desk: string): Promise<HistoryStory[]>;
+  listHistoryStories(cityId?: number): Promise<HistoryStory[]>;
+  listAllHistoryStoriesForDesk(desk: string, cityId?: number): Promise<HistoryStory[]>;
   createHistoryStory(input: InsertHistoryStory): Promise<HistoryStory>;
   updateHistoryStory(id: number, patch: Partial<InsertHistoryStory>): Promise<HistoryStory | null>;
   setHistoryVisibility(ids: number[], visible: boolean): Promise<void>;
@@ -303,7 +322,7 @@ export interface IStorage {
   bumpOldestHistoryStory(): Promise<void>;
   countHistoryStories(): Promise<number>;
   deleteHistoryStoryById(id: number): Promise<void>;
-  listJobPosts(state?: JobPostState): Promise<JobPost[]>;
+  listJobPosts(state?: JobPostState, cityId?: number): Promise<JobPost[]>;
   getJobPost(id: number): Promise<JobPost | null>;
   createJobPost(input: InsertJobPost): Promise<JobPost>;
   setJobPostState(id: number, state: JobPostState): Promise<JobPost | null>;
@@ -315,6 +334,20 @@ export interface IStorage {
 
 // ------ DatabaseStorage implementation ------
 export class DatabaseStorage implements IStorage {
+  // ----- Cities -----
+  async listCities(): Promise<City[]> {
+    const rows = await db.select().from(cities).where(eq(cities.active, true)).orderBy(asc(cities.sortOrder));
+    return rows as City[];
+  }
+  async getCityBySlug(slug: string): Promise<City | undefined> {
+    const rows = await db.select().from(cities).where(eq(cities.slug, slug)).limit(1);
+    return rows[0] as City | undefined;
+  }
+  async getCityById(id: number): Promise<City | undefined> {
+    const rows = await db.select().from(cities).where(eq(cities.id, id)).limit(1);
+    return rows[0] as City | undefined;
+  }
+
   // ----- Stories -----
   async listStories(q: StoryQuery): Promise<{ items: Story[]; nextCursor: number | null; total: number }> {
     const limit = q.limit ?? 20;
@@ -328,6 +361,7 @@ export class DatabaseStorage implements IStorage {
     if (q.desk && q.desk !== "all") {
       conditions.push(eq(stories.desk, q.desk));
     }
+    if (q.cityId) conditions.push(eq(stories.cityId, q.cityId));
     if (q.isReviewed !== undefined) conditions.push(eq(stories.isReviewed, q.isReviewed));
     if (needle) {
       conditions.push(sql`(lower(${stories.headline}) LIKE ${needle} OR lower(${stories.summary}) LIKE ${needle} OR lower(${stories.tags}) LIKE ${needle} OR lower(coalesce(${stories.location}, '')) LIKE ${needle})`);
@@ -370,22 +404,22 @@ export class DatabaseStorage implements IStorage {
   // community calendar. Desk is preserved so each row keeps its category color
   // (a city mayoral debate is desk='city', a Wilma show is desk='entertainment',
   // both appear on the calendar with their respective colors).
-  async listEvents(limit = 6): Promise<EventItem[]> {
+  async listEvents(limit = 6, cityId?: number): Promise<EventItem[]> {
     // A story belongs on the calendar iff on_calendar = true.
     const nowIso = new Date().toISOString();
+    const conds: any[] = [
+      eq(stories.onCalendar, true),
+      ne(stories.modState, "rejected"),
+      or(
+        gte(stories.endsAt, nowIso),
+        and(isNull(stories.endsAt), gte(stories.startsAt, nowIso)),
+      ),
+    ];
+    if (cityId) conds.push(eq(stories.cityId, cityId));
     const rows = await db
       .select()
       .from(stories)
-      .where(
-        and(
-          eq(stories.onCalendar, true),
-          ne(stories.modState, "rejected"),
-          or(
-            gte(stories.endsAt, nowIso),
-            and(isNull(stories.endsAt), gte(stories.startsAt, nowIso)),
-          ),
-        ),
-      )
+      .where(and(...conds))
       .orderBy(asc(stories.startsAt))
       .limit(limit);
     return rows.map(rowToEventFromStory);
@@ -443,13 +477,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ----- Sources -----
-  async listSources(): Promise<Source[]> {
-    const rows = await db.select().from(sources).orderBy(asc(sources.name));
+  async listSources(cityId?: number): Promise<Source[]> {
+    const q = cityId
+      ? db.select().from(sources).where(eq(sources.cityId, cityId)).orderBy(asc(sources.name))
+      : db.select().from(sources).orderBy(asc(sources.name));
+    const rows = await q;
     return rows.map(rowToSource);
   }
 
-  async getPublishedCounts(): Promise<Map<string, number>> {
-    const rows = await db.execute(sql`SELECT lower(source_name) AS name, COUNT(*)::int AS c FROM stories WHERE mod_state = 'approved' GROUP BY lower(source_name)`);
+  async getPublishedCounts(cityId?: number): Promise<Map<string, number>> {
+    const rows = cityId
+      ? await db.execute(sql`SELECT lower(source_name) AS name, COUNT(*)::int AS c FROM stories WHERE mod_state = 'approved' AND city_id = ${cityId} GROUP BY lower(source_name)`)
+      : await db.execute(sql`SELECT lower(source_name) AS name, COUNT(*)::int AS c FROM stories WHERE mod_state = 'approved' GROUP BY lower(source_name)`);
     const map = new Map<string, number>();
     for (const r of rows as unknown as Array<{ name: string; c: number }>) map.set(r.name, r.c);
     return map;
@@ -561,17 +600,22 @@ export class DatabaseStorage implements IStorage {
     return rowToIngestRun(rows[0]);
   }
 
-  async listIngestRuns(limit = 40): Promise<IngestRun[]> {
-    const rows = await db.select().from(ingestRuns).orderBy(desc(ingestRuns.startedAt)).limit(limit);
+  async listIngestRuns(limit = 40, cityId?: number): Promise<IngestRun[]> {
+    const q = cityId
+      ? db.select().from(ingestRuns).where(eq(ingestRuns.cityId, cityId)).orderBy(desc(ingestRuns.startedAt)).limit(limit)
+      : db.select().from(ingestRuns).orderBy(desc(ingestRuns.startedAt)).limit(limit);
+    const rows = await q;
     return rows.map(rowToIngestRun);
   }
 
   // ----- Tags / top stories -----
-  async getTrendingTags(limit = 10): Promise<Array<{ tag: string; count: number }>> {
+  async getTrendingTags(limit = 10, cityId?: number): Promise<Array<{ tag: string; count: number }>> {
+    const tagConds: any[] = [eq(stories.modState, "approved")];
+    if (cityId) tagConds.push(eq(stories.cityId, cityId));
     const rows = await db
       .select({ tags: stories.tags })
       .from(stories)
-      .where(eq(stories.modState, "approved"))
+      .where(and(...tagConds))
       .orderBy(desc(stories.publishedAt))
       .limit(80);
     const counts = new Map<string, number>();
@@ -587,16 +631,25 @@ export class DatabaseStorage implements IStorage {
       .slice(0, limit);
   }
 
-  async getTopStories(limit = 6): Promise<Story[]> {
+  async getTopStories(limit = 6, cityId?: number): Promise<Story[]> {
     const windowStart = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString();
-    const rows = await db.execute(sql`
-      SELECT * FROM stories
-      WHERE mod_state = 'approved' AND published_at > ${windowStart}
-      ORDER BY
-        CASE risk_level WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
-        published_at DESC
-      LIMIT 200
-    `);
+    const rows = cityId
+      ? await db.execute(sql`
+          SELECT * FROM stories
+          WHERE mod_state = 'approved' AND published_at > ${windowStart} AND city_id = ${cityId}
+          ORDER BY
+            CASE risk_level WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
+            published_at DESC
+          LIMIT 200
+        `)
+      : await db.execute(sql`
+          SELECT * FROM stories
+          WHERE mod_state = 'approved' AND published_at > ${windowStart}
+          ORDER BY
+            CASE risk_level WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
+            published_at DESC
+          LIMIT 200
+        `);
     const seen = new Set<string>();
     const out: any[] = [];
     for (const r of rows as any[]) {
@@ -731,13 +784,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ----- History stories (long-form pool, also serves People desk) -----
-  async listHistoryStories(): Promise<HistoryStory[]> {
-    const rows = await db.select().from(historyStories).where(eq(historyStories.isVisible, true)).orderBy(desc(historyStories.lastBumpedAt));
+  async listHistoryStories(cityId?: number): Promise<HistoryStory[]> {
+    const conds: any[] = [eq(historyStories.isVisible, true)];
+    if (cityId) conds.push(eq(historyStories.cityId, cityId));
+    const rows = await db.select().from(historyStories).where(and(...conds)).orderBy(desc(historyStories.lastBumpedAt));
     return rows.map(rowToHistoryStory);
   }
 
-  async listAllHistoryStoriesForDesk(desk: string): Promise<HistoryStory[]> {
-    const rows = await db.select().from(historyStories).where(eq(historyStories.desk, desk)).orderBy(desc(historyStories.publishedAt));
+  async listAllHistoryStoriesForDesk(desk: string, cityId?: number): Promise<HistoryStory[]> {
+    const conds: any[] = [eq(historyStories.desk, desk)];
+    if (cityId) conds.push(eq(historyStories.cityId, cityId));
+    const rows = await db.select().from(historyStories).where(and(...conds)).orderBy(desc(historyStories.publishedAt));
     return rows.map(rowToHistoryStory);
   }
 
@@ -796,10 +853,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ----- Job posts -----
-  async listJobPosts(state?: JobPostState): Promise<JobPost[]> {
-    const rows = state
-      ? await db.select().from(jobPosts).where(eq(jobPosts.state, state)).orderBy(desc(jobPosts.submittedAt))
-      : await db.select().from(jobPosts).orderBy(desc(jobPosts.submittedAt));
+  async listJobPosts(state?: JobPostState, cityId?: number): Promise<JobPost[]> {
+    const conds: any[] = [];
+    if (state) conds.push(eq(jobPosts.state, state));
+    if (cityId) conds.push(eq(jobPosts.cityId, cityId));
+    const q = conds.length
+      ? db.select().from(jobPosts).where(and(...conds)).orderBy(desc(jobPosts.submittedAt))
+      : db.select().from(jobPosts).orderBy(desc(jobPosts.submittedAt));
+    const rows = await q;
     return rows.map(rowToJobPost);
   }
 

@@ -1,14 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import type { IngestRun } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { useAdminCity } from "@/lib/admin-city-context";
 import { relativeTime } from "@/lib/format";
 import { AlertTriangle } from "lucide-react";
 
 export function IngestLogPanel() {
+  const { currentCity } = useAdminCity();
+  const citySlug = currentCity.slug;
   const { data, isLoading } = useQuery<IngestRun[]>({
-    queryKey: ["/api/ingest/runs"],
+    queryKey: ["/api/ingest/runs", citySlug],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/ingest/runs?limit=40");
+      const res = await apiRequest("GET", `/api/ingest/runs?limit=40&city=${citySlug}`);
       return (await res.json()) as IngestRun[];
     },
     refetchInterval: 10_000,

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Story } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useCity } from "@/lib/city-context";
 import { TopBar } from "@/components/TopBar";
 import { RightRail } from "@/components/RightRail";
 import { StoryCard, StoryCardSkeleton } from "@/components/StoryCard";
@@ -48,6 +49,8 @@ function readPendingDesk(): "all" | DeskId {
 }
 
 export default function Home() {
+  const { currentCity } = useCity();
+  const citySlug = currentCity.slug;
   const [desk, setDesk] = useState<"all" | DeskId>(() => readPendingDesk());
 
   useEffect(() => {
@@ -76,7 +79,7 @@ export default function Home() {
     setCursor(0);
     setItems([]);
     setNewPostsCount(0);
-  }, [desk, debounced]);
+  }, [desk, debounced, citySlug]);
 
   // History + People desks: long-form articles come from /api/history (shared pool)
   const isHistoryDesk = desk === "history";
@@ -84,10 +87,10 @@ export default function Home() {
   const isEventsDesk = desk === "entertainment";
 
   const historyQuery = useQuery<HistoryStory[]>({
-    queryKey: ["/api/history", isPeopleDesk ? "people" : "history"],
+    queryKey: ["/api/history", isPeopleDesk ? "people" : "history", citySlug],
     queryFn: async () => {
-      const url = isPeopleDesk ? "/api/history?desk=people" : "/api/history?desk=history";
-      const res = await apiRequest("GET", url);
+      const deskParam = isPeopleDesk ? "people" : "history";
+      const res = await apiRequest("GET", `/api/history?desk=${deskParam}&city=${citySlug}`);
       return (await res.json()) as HistoryStory[];
     },
     enabled: isHistoryDesk || isPeopleDesk,
@@ -95,13 +98,14 @@ export default function Home() {
 
   // Regular feed query — used for all desks except history
   const feed = useQuery<StoriesPage>({
-    queryKey: ["/api/stories", { desk, q: debounced, cursor, limit: 12 }],
+    queryKey: ["/api/stories", { desk, q: debounced, cursor, limit: 12, city: citySlug }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (desk !== "all") params.set("desk", desk);
       if (debounced) params.set("q", debounced);
       params.set("limit", "12");
       params.set("cursor", String(cursor));
+      params.set("city", citySlug);
       const res = await apiRequest("GET", `/api/stories?${params.toString()}`);
       return (await res.json()) as StoriesPage;
     },
@@ -128,7 +132,11 @@ export default function Home() {
     ingestionCadenceMinutes: number;
     serverTime: string;
   }>({
-    queryKey: ["/api/pulse"],
+    queryKey: ["/api/pulse", citySlug],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/pulse?city=${citySlug}`);
+      return (await res.json()) as any;
+    },
     refetchInterval: 30_000,
   });
 
@@ -180,7 +188,7 @@ export default function Home() {
       const firstPara = stripped.split(/\n{2,}/)[0] ?? stripped;
       const preview = firstPara.length > 320 ? firstPara.slice(0, 320).trim() + "…" : firstPara;
       const deskId = (h.desk ?? "history") as "history" | "people";
-      const baseTags = deskId === "people" ? ["people", "missoula"] : ["history", "missoula"];
+      const baseTags = deskId === "people" ? ["people", citySlug] : ["history", citySlug];
       const kindTag = h.kind && h.kind !== "history" ? [h.kind] : [];
       const sourceName = h.sourceUrl && /wikipedia\.org/i.test(h.sourceUrl) ? "Wikipedia" : "ZooTown History";
       return ({
@@ -196,7 +204,7 @@ export default function Home() {
       sourceType: deskId === "people" ? "Profile" : "Official",
       publishedAt: h.lastBumpedAt,
       fetchedAt: h.publishedAt,
-      location: "Missoula, MT",
+      location: `${currentCity.displayName}, ${currentCity.state}`,
       status: null,
       riskLevel: "low",
       isSeeded: true,
@@ -275,7 +283,7 @@ export default function Home() {
             <div className="mb-4 flex items-end justify-between gap-4">
               <div>
                 <h1 className="font-serif text-[1.65rem] leading-tight font-semibold tracking-tight text-foreground">
-                  {desk === "all" ? "Live from Missoula" : DESK_META[desk as DeskId]?.label ?? desk}
+                  {desk === "all" ? `Live from ${currentCity.displayName}` : DESK_META[desk as DeskId]?.label ?? desk}
                 </h1>
                 {desk === "history" && (
                   <p className="mt-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
@@ -372,7 +380,7 @@ export default function Home() {
         <footer className="mx-auto mt-16 max-w-[1400px] border-t border-border pt-6 text-xs text-muted-foreground">
           <div className="flex flex-col items-start justify-between gap-2 md:flex-row md:items-center">
             <div>
-              ZooTown · AI-assisted local aggregation for Missoula, MT. We summarize, we don't
+              ZooTown · AI-assisted local aggregation for {currentCity.displayName}, {currentCity.state}. We summarize, we don't
               republish.
             </div>
             <div className="font-mono text-[0.62rem] uppercase tracking-[0.18em]">

@@ -14,6 +14,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useAdminCity } from "@/lib/admin-city-context";
 import type { Story } from "@shared/schema";
 import { EditStoryModal } from "./EditStoryModal";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -28,6 +29,8 @@ interface StoriesPage {
 }
 
 export function StoryInbox() {
+  const { currentCity } = useAdminCity();
+  const citySlug = currentCity.slug;
   const [tab, setTab] = useState<Tab>("unreviewed");
   const [editing, setEditing] = useState<Story | null>(null);
   const [deleting, setDeleting] = useState<Story | null>(null);
@@ -35,13 +38,14 @@ export function StoryInbox() {
   const isReviewed = tab === "reviewed";
 
   const { data, isLoading } = useQuery<StoriesPage>({
-    queryKey: ["/api/stories", { isReviewed, inbox: true }],
+    queryKey: ["/api/stories", { isReviewed, inbox: true, city: citySlug }],
     queryFn: async () => {
       const p = new URLSearchParams();
       p.set("isReviewed", String(isReviewed));
       p.set("limit", "50");
       p.set("modState", "all");
       p.set("includeEvents", "true"); // events show in the inbox too
+      p.set("city", citySlug);
       const res = await apiRequest("GET", `/api/stories?${p.toString()}`);
       return (await res.json()) as StoriesPage;
     },

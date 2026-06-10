@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import type { EventItem } from "@shared/schema";
 import { apiRequest } from "@/lib/queryClient";
+import { useCity } from "@/lib/city-context";
 import { DESK_META, type DeskId } from "@/lib/format";
 import { TopBar } from "@/components/TopBar";
 import { Weather } from "@/components/Weather";
@@ -93,6 +94,8 @@ function buildMonthGrid(anchor: Date): Date[] {
 }
 
 export default function CalendarPage() {
+  const { currentCity } = useCity();
+  const citySlug = currentCity.slug;
   // Keep TopBar happy — not actually used for navigation here, but it exists in the shared shell.
   const [, setHomeDesk] = useState<DeskFilter>("all");
   const [query, setQuery] = useState("");
@@ -105,9 +108,9 @@ export default function CalendarPage() {
   const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
 
   const eventsQuery = useQuery<EventItem[]>({
-    queryKey: ["/api/events", { limit: 500 }],
+    queryKey: ["/api/events", { limit: 500, city: citySlug }],
     queryFn: async () => {
-      const res = await apiRequest("GET", `/api/events?limit=500`);
+      const res = await apiRequest("GET", `/api/events?limit=500&city=${citySlug}`);
       return (await res.json()) as EventItem[];
     },
   });
@@ -214,7 +217,7 @@ export default function CalendarPage() {
               ZooTown calendar
             </div>
             <h1 className="mt-1 font-serif text-[1.85rem] leading-tight font-semibold tracking-tight text-foreground">
-              Everything happening in Missoula
+              Everything happening in {currentCity.displayName}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Elections, civic meetings, arts, sports, volunteer days, and more — pulled from every
@@ -613,7 +616,7 @@ export default function CalendarPage() {
               tickets.
             </div>
             <Link
-              href="/"
+              href={`/${citySlug}`}
               className="font-mono text-[0.62rem] uppercase tracking-[0.18em] hover:text-foreground"
               data-testid="link-back-home"
             >

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useCity } from "@/lib/city-context";
 import { TopBar } from "@/components/TopBar";
 import { Weather } from "@/components/Weather";
 import { SourcesDialog } from "@/components/SourcesDialog";
@@ -61,15 +62,17 @@ const BODY_PLACEHOLDER = `Tell people about the job. A few things candidates lik
 Example: "We're hiring a part-time server at Top Hat. If you've ever wanted to work downtown nights, stop in any afternoon and ask for Sam. $14/hr + tips, weekends required."`;
 
 export default function JobsPage() {
+  const { currentCity } = useCity();
+  const citySlug = currentCity.slug;
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [q, setQ] = useState("");
   const [showForm, setShowForm] = useState(false);
   const qc = useQueryClient();
 
   const jobsQuery = useQuery<JobsResponse>({
-    queryKey: ["/api/jobs"],
+    queryKey: ["/api/jobs", citySlug],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/jobs");
+      const res = await apiRequest("GET", `/api/jobs?city=${citySlug}`);
       return (await res.json()) as JobsResponse;
     },
   });
@@ -106,7 +109,7 @@ export default function JobsPage() {
   const submit = useMutation({
     mutationFn: async () => {
       try {
-        const res = await apiRequest("POST", "/api/jobs", form);
+        const res = await apiRequest("POST", "/api/jobs", { ...form, city: citySlug });
         return await res.json();
       } catch (e: any) {
         // apiRequest throws "<status>: <body>" on non-2xx. Parse the body if it's JSON.
@@ -140,7 +143,7 @@ export default function JobsPage() {
         body: "",
         submitterEmail: "",
       });
-      qc.invalidateQueries({ queryKey: ["/api/jobs"] });
+      qc.invalidateQueries({ queryKey: ["/api/jobs", citySlug] });
     },
     onError: (err: Error) => {
       setSubmitState({ kind: "err", message: err.message });
@@ -176,7 +179,7 @@ export default function JobsPage() {
             className="font-serif text-3xl font-semibold leading-tight md:text-4xl"
             data-testid="heading-jobs"
           >
-            Who's hiring in Missoula
+            Who's hiring in {currentCity.displayName}
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
             A community job board. Local employers post directly — every listing

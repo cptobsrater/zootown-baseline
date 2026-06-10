@@ -137,6 +137,7 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
           tag: "Event",
           desk: calendarDesk,
           description: item.summary ?? null,
+          cityId: source.cityId ?? null,
         });
         added++;
         continue;
@@ -174,6 +175,8 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
       // 3) Insert as a new story.
       const baseInsert = toInsertStory({ ...item, url: canonical }, source);
       const { story: insert, hits: ruleHits } = await applyClassificationRules(baseInsert, source);
+      // Stamp the story with the source's city so per-city queries can scope it.
+      (insert as any).cityId = source.cityId ?? null;
       const story = await storage.createStory(insert);
       if (ruleHits.length) await bumpHitCounts(ruleHits);
       // Seed the join table with the primary source so the drawer can uniformly
@@ -214,6 +217,7 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
     clustered,
     errors,
     message,
+    cityId: source.cityId ?? null,
   });
 
   return {
