@@ -155,32 +155,31 @@ export function Weather() {
           )}
         </div>
 
-        {/* Alert chip (if any) */}
-        {topAlert && (
+        {/* Right group: alert badge (if any) + NWS source link */}
+        <div className="ml-auto flex items-center gap-2">
+          {topAlert && (
+            <a
+              href="https://alerts.weather.gov/cap/mt.php"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="weather-alert"
+              aria-label={topAlert.headline || topAlert.event}
+              title={topAlert.headline || topAlert.event}
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm"
+            >
+              <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+            </a>
+          )}
           <a
-            href="https://alerts.weather.gov/cap/mt.php"
+            href={data.sourceUrl || "https://forecast.weather.gov/MapClick.php?lat=46.8721&lon=-113.994"}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 rounded-full border border-destructive/50 bg-destructive/10 px-2 py-0.5 font-mono text-[0.6rem] uppercase tracking-[0.16em] text-destructive hover:bg-destructive/20"
-            data-testid="weather-alert"
-            title={topAlert.headline || topAlert.event}
+            className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground hover:text-foreground"
+            data-testid="link-weather-source"
           >
-            <AlertTriangle className="h-3 w-3" />
-            {topAlert.event}
-            {data.alerts.length > 1 && <span>· +{data.alerts.length - 1}</span>}
+            NWS →
           </a>
-        )}
-
-        {/* Right: source link */}
-        <a
-          href={data.sourceUrl || "https://forecast.weather.gov/MapClick.php?lat=46.8721&lon=-113.994"}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="ml-auto font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground hover:text-foreground"
-          data-testid="link-weather-source"
-        >
-          {data.source || "NWS"} →
-        </a>
+        </div>
       </div>
     </div>
   );

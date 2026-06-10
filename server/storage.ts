@@ -463,6 +463,7 @@ export class DatabaseStorage implements IStorage {
       endsAt: input.endsAt ?? null,
       isReviewed: false,
       reviewedAt: null,
+      cityId: (input as any).cityId ?? null,
     };
     const rows = await db.insert(stories).values(storyRow).returning();
     return rowToEventFromStory(rows[0]);
