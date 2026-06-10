@@ -4,7 +4,8 @@
   "outputDirectory": "dist/public",
   "framework": null,
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/[...path]" }
+    { "source": "/api/(.*)", "destination": "/api/[...path]" },
+    { "source": "/((?!api/|assets/|.*\\..*).*)", "destination": "/index.html" }
   ],
   "crons": [
     { "path": "/api/cron/ingest", "schedule": "*/5 * * * *" },
