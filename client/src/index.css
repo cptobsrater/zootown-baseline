@@ -65,7 +65,7 @@
   --desk-community-fg: 36 24% 97%;
   --desk-politics: 220 40% 30%;        /* neutral deep slate-navy */
   --desk-politics-fg: 36 24% 97%;
-  --desk-sports: 28 88% 38%;           /* Griz maroon-orange */
+  --desk-sports: 142 58% 32%;          /* turf/forest green — distinct from business copper */
   --desk-sports-fg: 36 24% 97%;
   --desk-health: 188 64% 30%;          /* clinical teal */
   --desk-health-fg: 36 24% 97%;
@@ -172,7 +172,7 @@
   --desk-community-fg: 220 28% 7%;
   --desk-politics: 220 50% 68%;
   --desk-politics-fg: 220 28% 7%;
-  --desk-sports: 28 84% 60%;
+  --desk-sports: 142 52% 55%;          /* turf green (dark mode) — distinct from business copper */
   --desk-sports-fg: 220 28% 7%;
   --desk-health: 188 60% 56%;
   --desk-health-fg: 220 28% 7%;
