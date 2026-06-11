@@ -1,6 +1,9 @@
 import { useState } from "react";
 import type { Story } from "@shared/schema";
-import { Share2, Link as LinkIcon, Mail, MessageSquare, Check } from "lucide-react";
+// `Share` is the iOS-style box-with-up-arrow glyph (the universal share
+// symbol). `Share2` is the three-dot network icon -- we used to use it but
+// it doesn't read as "share" to most users, so we switched.
+import { Share, Link as LinkIcon, Mail, MessageSquare, Check } from "lucide-react";
 import { useCity } from "@/lib/city-context";
 import type { City } from "@/lib/city-context";
 import {
@@ -112,7 +115,7 @@ export function ShareButton({ story }: Props) {
         className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover-elevate"
         data-testid={`button-share-${story.id}`}
       >
-        <Share2 className="h-4 w-4" />
+        <Share className="h-4 w-4" />
       </button>
     );
   }
@@ -128,7 +131,7 @@ export function ShareButton({ story }: Props) {
           className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover-elevate"
           data-testid={`button-share-${story.id}`}
         >
-          <Share2 className="h-4 w-4" />
+          <Share className="h-4 w-4" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={stop} className="w-48">
