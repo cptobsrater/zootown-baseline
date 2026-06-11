@@ -10,6 +10,7 @@ import {
   formatEventRange,
 } from "@/lib/format";
 import { DeskBadge } from "./DeskBadge";
+import { ShareButton } from "./ShareButton";
 import { ExternalLink, Layers, MapPin, Scale } from "lucide-react";
 
 export type StoryWithSourceCount = Story & { sourceCount?: number };
@@ -67,6 +68,12 @@ export function StoryCard({ story, onOpen }: Props) {
         >
           {relativeTime(story.publishedAt)}
         </time>
+        {/* Share button — native Web Share sheet on mobile, copy/email/social
+            dropdown on desktop. ms-auto floats it to the right edge of the
+            card's top row without disturbing the rest of the layout. */}
+        <div className="ms-auto">
+          <ShareButton story={story} />
+        </div>
         {/* status pill (New / Updated / Event / Developing) intentionally
             removed -- it duplicated the desk color and the bottom-row
             source/event pill on every card. */}

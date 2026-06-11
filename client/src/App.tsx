@@ -32,6 +32,10 @@ function AppRouter() {
       {/* City-scoped routes */}
       <Route path="/:city/calendar" component={CalendarPage} />
       <Route path="/:city/jobs" component={JobsPage} />
+      {/* Story deep link — same Home component, but the storyId param tells
+          it to auto-open the drawer to that story so shared links land
+          straight on the article. */}
+      <Route path="/:city/story/:storyId" component={Home} />
       <Route path="/:city" component={Home} />
 
       {/* Legacy fall-throughs for the old root-level pages */}

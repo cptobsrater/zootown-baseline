@@ -6,6 +6,7 @@ import { useCity } from "@/lib/city-context";
 import { TopBar } from "@/components/TopBar";
 import { RightRail } from "@/components/RightRail";
 import { StoryCard, StoryCardSkeleton } from "@/components/StoryCard";
+import { useLocation, useRoute } from "wouter";
 import { StoryDrawer } from "@/components/StoryDrawer";
 import { SourcesDialog } from "@/components/SourcesDialog";
 import { Weather } from "@/components/Weather";
@@ -121,6 +122,50 @@ export default function Home() {
   const [cursor, setCursor] = useState(0);
   const [items, setItems] = useState<Story[]>([]);
   const [selected, setSelected] = useState<Story | null>(null);
+
+  // ---- Story deep links ----
+  // When the URL is /:city/story/:storyId, auto-open the drawer to that
+  // story. Push the route back to /:city when the drawer closes so the
+  // back button does the right thing. Lets users share a link that lands
+  // straight on the article instead of an empty city feed.
+  const [, navigate] = useLocation();
+  const [matchStory, storyParams] = useRoute("/:city/story/:storyId");
+  const deepLinkStoryId =
+    matchStory && storyParams?.storyId ? Number(storyParams.storyId) : null;
+
+  // Fetch the deep-link story if we don't already have it loaded.
+  useEffect(() => {
+    if (deepLinkStoryId === null) return;
+    if (selected && selected.id === deepLinkStoryId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/stories/${deepLinkStoryId}`);
+        if (!res.ok) return;
+        const story = (await res.json()) as Story;
+        if (!cancelled) setSelected(story);
+      } catch {
+        /* network blip — user can still browse the feed */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [deepLinkStoryId, selected]);
+
+  // Mirror selected -> URL: when a card is clicked, push the deep-link route
+  // so the URL reflects what the user is viewing and the link is shareable
+  // straight from the address bar.
+  useEffect(() => {
+    if (selected) {
+      const target = `/${citySlug}/story/${selected.id}`;
+      if (window.location.pathname !== target) {
+        navigate(target, { replace: false });
+      }
+    } else if (matchStory) {
+      navigate(`/${citySlug}`, { replace: false });
+    }
+  }, [selected, matchStory, citySlug, navigate]);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [newPostsCount, setNewPostsCount] = useState(0);
 
