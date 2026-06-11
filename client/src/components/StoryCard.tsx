@@ -29,16 +29,10 @@ const SOURCE_BADGE_STYLE: Record<string, string> = {
 
 // Display-only relabel: data still stores the long source-type name so the
 // admin/ingest pipeline keeps its existing taxonomy, but the public pill is
-// shorter and friendlier on small cards.
+// shorter and friendlier on small cards. "Community Calendar" reads as
+// "Event" -- those rows are always upcoming events, never recurring news.
 const SOURCE_BADGE_LABEL: Record<string, string> = {
-  "Community Calendar": "Calendar",
-};
-
-const STATUS_STYLE: Record<string, string> = {
-  New: "bg-primary/12 text-primary border border-primary/25",
-  Updated: "bg-foreground/8 text-foreground border border-foreground/15",
-  Event: "bg-[hsl(var(--desk-entertainment))]/12 text-[hsl(var(--desk-entertainment))] border border-[hsl(var(--desk-entertainment))]/30",
-  Developing: "bg-destructive/12 text-destructive border border-destructive/25",
+  "Community Calendar": "Event",
 };
 
 export function StoryCard({ story, onOpen }: Props) {
@@ -73,18 +67,9 @@ export function StoryCard({ story, onOpen }: Props) {
         >
           {relativeTime(story.publishedAt)}
         </time>
-        {story.status && (
-          <>
-            <span className="text-[0.68rem] font-mono text-muted-foreground/70">·</span>
-            <span
-              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[0.64rem] font-medium ${
-                STATUS_STYLE[story.status] ?? ""
-              }`}
-            >
-              {story.status}
-            </span>
-          </>
-        )}
+        {/* status pill (New / Updated / Event / Developing) intentionally
+            removed -- it duplicated the desk color and the bottom-row
+            source/event pill on every card. */}
         {false && story.politicalScope && (
           <>
             <span className="text-[0.68rem] font-mono text-muted-foreground/70">·</span>
@@ -116,25 +101,16 @@ export function StoryCard({ story, onOpen }: Props) {
         {story.summary}
       </p>
 
-      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-        {story.location && (
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-            <MapPin className="h-3 w-3" />
-            {story.location}
-          </span>
-        )}
-        {tags.slice(0, 3).map((t) => (
-          <span
-            key={t}
-            className="text-[0.68rem] font-mono uppercase tracking-[0.14em] text-muted-foreground/80"
-          >
-            #{t}
-          </span>
-        ))}
-      </div>
+      {story.location && (
+        <div className="mt-4 flex items-center gap-1 text-xs text-muted-foreground">
+          <MapPin className="h-3 w-3" />
+          {story.location}
+        </div>
+      )}
 
-      <div className="mt-4 flex items-center justify-between border-t border-border/50 pt-3">
-        <div className="flex items-center gap-2">
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/50 pt-3">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          {/* Source-type pill: LOCAL NEWS / OFFICIAL / EVENT */}
           <span
             className={`inline-flex items-center rounded-full px-2 py-0.5 text-[0.64rem] font-medium uppercase tracking-[0.1em] ${
               SOURCE_BADGE_STYLE[story.sourceType] ?? ""
@@ -143,6 +119,16 @@ export function StoryCard({ story, onOpen }: Props) {
           >
             {SOURCE_BADGE_LABEL[story.sourceType] ?? story.sourceType}
           </span>
+          {/* Story tags as muted neutral pills, sitting alongside the source
+              pill so each card has a single "context bubbles" zone. */}
+          {tags.slice(0, 3).map((t) => (
+            <span
+              key={t}
+              className="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[0.62rem] font-mono uppercase tracking-[0.1em] text-muted-foreground"
+            >
+              {t}
+            </span>
+          ))}
           <span className="text-xs text-muted-foreground" data-testid={`text-source-${story.id}`}>
             {story.sourceName}
           </span>
