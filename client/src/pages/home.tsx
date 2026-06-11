@@ -6,8 +6,15 @@ import { useCity } from "@/lib/city-context";
 import { TopBar } from "@/components/TopBar";
 import { RightRail } from "@/components/RightRail";
 import { StoryCard, StoryCardSkeleton } from "@/components/StoryCard";
+import { Fragment } from "react";
 import { useLocation, useRoute } from "wouter";
 import { StoryDrawer } from "@/components/StoryDrawer";
+import { SponsorBanner } from "@/components/SponsorBanner";
+import {
+  shouldShowSponsorAfter,
+  bannerSlotForIndex,
+  pickSponsorForSlot,
+} from "@/lib/sponsors";
 import { SourcesDialog } from "@/components/SourcesDialog";
 import { Weather } from "@/components/Weather";
 import { DESK_META, type DeskId, parseTags, relativeTime } from "@/lib/format";
@@ -472,8 +479,27 @@ export default function Home() {
             )}
 
             <div className="space-y-3">
-              {displayItems.map((s) => (
-                <StoryCard key={s.id} story={s} onOpen={setSelected} />
+              {displayItems.map((s, idx) => (
+                <Fragment key={s.id}>
+                  <StoryCard story={s} onOpen={setSelected} />
+                  {/* Sponsor banner rule (lib/sponsors.ts): attach a banner to
+                      the bottom of the 2nd post (idx=1), then every 3rd post
+                      after that (4, 7, 10, ...). Rotates round-robin through
+                      sponsors eligible for the current city. Hidden on the
+                      single-desk People/History/Events tabs and during search
+                      where the feed is short and rule arithmetic feels off. */}
+                  {shouldShowSponsorAfter(idx) &&
+                    !isHistoryDesk &&
+                    !isPeopleDesk &&
+                    !isEventsDesk &&
+                    !debounced &&
+                    (() => {
+                      const slot = bannerSlotForIndex(idx);
+                      const sponsor = pickSponsorForSlot(citySlug, slot);
+                      if (!sponsor) return null;
+                      return <SponsorBanner sponsor={sponsor} />;
+                    })()}
+                </Fragment>
               ))}
 
               {isLoading && displayItems.length === 0 && (
