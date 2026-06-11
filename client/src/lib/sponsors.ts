@@ -56,11 +56,11 @@ export const SPONSORS: Sponsor[] = [
     logoAlt: "Smoke City Glass & Vape logo",
     address: "2400 Brooks St · Missoula, MT 59801",
     phone: "(406) 304-3030",
-    // Click target: their Google Business listing (place_id form) so the
-    // recipient sees hours, photos, reviews, and a Directions button --
-    // matches what the sponsor wants to highlight. Using place_id rather
-    // than a share.google short link so the URL doesn't expire.
-    href: "https://www.google.com/maps/place/?q=place_id:ChIJGa1jB_jNXVMRiA8akNiGyks",
+    // Click target: the exact Google Maps URL the sponsor requested -- a
+    // map view centered on the Brooks St shop with all Smoke City
+    // locations visible. Recipient sees the storefront pin, hours,
+    // photos, reviews, and a Directions button.
+    href: "https://www.google.com/maps/search/Smoke+City/@46.8715711,-114.0120254,14z/data=!3m1!4b1?entry=ttu&g_ep=EgoyMDI2MDYwMy4xIKXMDSoASAFQAw%3D%3D",
     cities: ["missoula"],
   },
   {
