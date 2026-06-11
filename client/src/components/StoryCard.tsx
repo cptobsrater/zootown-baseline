@@ -27,6 +27,13 @@ const SOURCE_BADGE_STYLE: Record<string, string> = {
     "bg-desk-entertainment/10 text-[hsl(var(--desk-entertainment))] border border-[hsl(var(--desk-entertainment))]/30",
 };
 
+// Display-only relabel: data still stores the long source-type name so the
+// admin/ingest pipeline keeps its existing taxonomy, but the public pill is
+// shorter and friendlier on small cards.
+const SOURCE_BADGE_LABEL: Record<string, string> = {
+  "Community Calendar": "Calendar",
+};
+
 const STATUS_STYLE: Record<string, string> = {
   New: "bg-primary/12 text-primary border border-primary/25",
   Updated: "bg-foreground/8 text-foreground border border-foreground/15",
@@ -134,7 +141,7 @@ export function StoryCard({ story, onOpen }: Props) {
             }`}
             title={`Source type: ${story.sourceType}`}
           >
-            {story.sourceType}
+            {SOURCE_BADGE_LABEL[story.sourceType] ?? story.sourceType}
           </span>
           <span className="text-xs text-muted-foreground" data-testid={`text-source-${story.id}`}>
             {story.sourceName}
