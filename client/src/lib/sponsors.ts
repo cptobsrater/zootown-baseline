@@ -42,6 +42,13 @@ export interface Sponsor {
   href: string;
   /** Per-city eligibility list (slugs). Banner only shown in these cities. */
   cities: CitySlug[];
+  /**
+   * Optional social links rendered as small icons on the right side of the
+   * banner. Each is its own clickable target (stopPropagation), so tapping
+   * an icon goes to that social account rather than the banner's main href.
+   */
+  instagram?: string;
+  facebook?: string;
 }
 
 // Order matters: sponsors are rotated round-robin starting at index 0,
@@ -91,6 +98,8 @@ export const SPONSORS: Sponsor[] = [
     tagline: "Book online · Lash lifts, extensions, brows",
     href: "https://lostesthetics.glossgenius.com/",
     cities: ["missoula"],
+    instagram: "https://www.instagram.com/lost.esthetics/",
+    facebook: "https://www.facebook.com/profile.php?id=61584788651199",
   },
   {
     id: "docs-sandwich",
