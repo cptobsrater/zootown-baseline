@@ -61,7 +61,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const desksArr = parsed.data.desks
       ? parsed.data.desks.split(",").map((s) => s.trim()).filter(Boolean)
       : undefined;
-    const result = await storage.listStories({ ...parsed.data, desks: desksArr, cityId });
+    // Apply the per-desk rebalance for the public feed: only on page 1 and
+    // only when the user is browsing "All" (no desk filter / no search).
+    // The storage layer guards against rebalancing in any other case so the
+    // admin Inbox stays in strict chronological order.
+    const noDeskFilter = !(desksArr && desksArr.length > 0)
+      && (!parsed.data.desk || parsed.data.desk === "all");
+    const noSearch = !parsed.data.q || !parsed.data.q.trim();
+    const noCursor = !parsed.data.cursor || parsed.data.cursor === 0;
+    const isPublicModState = !parsed.data.modState || parsed.data.modState === "approved";
+    const rebalance = noDeskFilter && noSearch && noCursor && isPublicModState;
+    const result = await storage.listStories({
+      ...parsed.data,
+      desks: desksArr,
+      cityId,
+      rebalance,
+    });
     // Annotate each story with its source count so feed cards can show "+N sources".
     const items = await Promise.all(
       result.items.map(async (s) => ({ ...s, sourceCount: await storage.countStorySources(s.id) })),

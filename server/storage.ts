@@ -73,6 +73,11 @@ export interface StoryQuery {
   isReviewed?: boolean;          // filter by admin-review state
   includeEvents?: boolean;       // legacy flag kept for compat; events live as desk-tagged stories now
   cityId?: number;               // multi-city: scope to this city. Omitted = Missoula default.
+  // Public-feed rebalance: when true AND no desk filter is active AND cursor=0,
+  // fetch a deeper buffer and prune any single desk down to ~35% of the page
+  // so the client interleaver always has variety to work with. Off by default
+  // so the admin Inbox stays in strict chronological order.
+  rebalance?: boolean;
 }
 
 // ------ Row mappers (snake_case DB rows → camelCase types) ------
@@ -451,6 +456,71 @@ export class DatabaseStorage implements IStorage {
 
     const totalRes = await db.select({ c: sql<number>`count(*)::int` }).from(stories).where(whereClause as any);
     const total = totalRes[0]?.c ?? 0;
+
+    // ----- Rebalance path -----
+    // Triggered only on the public feed's first page when no desk filter is
+    // active. The unbalanced case is an Eventbrite/aggregator burst stamping
+    // dozens of same-desk rows with near-identical published_at values, which
+    // dominates the chronological top of the feed. We fix that here so the
+    // client interleaver has variety to alternate with on page 1.
+    const noDeskFilter =
+      !(q.desks && q.desks.length > 0) && (!q.desk || q.desk === "all");
+    const shouldRebalance =
+      q.rebalance === true && cursor === 0 && noDeskFilter && !needle;
+    if (shouldRebalance) {
+      // Cap any one desk at ~35% of the page. For limit=10 that is 3-4 rows;
+      // for limit=20 it is 7. Floor at 2 so tiny pages still work.
+      const perDeskCap = Math.max(2, Math.ceil(limit * 0.35));
+
+      // Stratified fetch: pull the newest perDeskCap+1 rows from EACH desk
+      // present in the city via a window function. This guarantees variety
+      // even when one desk (e.g. an Eventbrite burst) has hundreds of rows
+      // at the chronological top -- the top per-desk slots are independent.
+      // Drizzle does not have a clean .raw chainable; we hand-build the SQL.
+      const perDeskFetch = perDeskCap + 2; // a little headroom for picking
+      const baseWhere = whereClause as any;
+      // Window-function pull: rank stories per desk by published_at DESC.
+      // We pull up to `perDeskFetch` rows per desk, then in JS interleave
+      // them in chronological order so the page still feels "newest first".
+      const stratifiedRows = await db.execute(sql`
+        WITH ranked AS (
+          SELECT *,
+            ROW_NUMBER() OVER (PARTITION BY desk ORDER BY published_at DESC) AS rn
+          FROM stories
+          WHERE ${baseWhere ?? sql`TRUE`}
+        )
+        SELECT * FROM ranked WHERE rn <= ${perDeskFetch}
+        ORDER BY published_at DESC
+      `);
+      // postgres-js returns the rows as a plain array on .execute().
+      const buffer = ((stratifiedRows as unknown as any[]) || []).map(rowToStory);
+
+      // Pick chronologically while enforcing the per-desk cap. Any rows that
+      // would push a desk over its cap go into `overflow` and only get used
+      // if the page can't be filled otherwise ("feed ran out" rule).
+      const counts = new Map<string, number>();
+      const picked: Story[] = [];
+      const overflow: Story[] = [];
+      for (const s of buffer) {
+        const d = s.desk ?? "";
+        const used = counts.get(d) ?? 0;
+        if (used < perDeskCap && picked.length < limit) {
+          picked.push(s);
+          counts.set(d, used + 1);
+        } else {
+          overflow.push(s);
+        }
+      }
+      while (picked.length < limit && overflow.length > 0) {
+        picked.push(overflow.shift()!);
+      }
+      // Page 2 falls back to raw chronological from the appropriate offset.
+      // Use `limit` as the next cursor offset -- the client treats page 2 as
+      // "next limit rows in chronological order", which is fine because the
+      // dominant-desk rows we deferred on page 1 will reappear there.
+      const nextCursor = picked.length >= limit && total > limit ? limit : null;
+      return { items: picked, nextCursor, total };
+    }
 
     const rows = await db
       .select()
