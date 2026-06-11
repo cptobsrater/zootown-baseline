@@ -48,15 +48,34 @@ function readPendingDesk(): "all" | DeskId {
   return VALID_DESKS.includes((d ?? "") as any) ? (d as "all" | DeskId) : "all";
 }
 
+// Convert the pending desk signal into the initial Set state. "all" => empty Set.
+function initialDeskSet(): Set<DeskId> {
+  const d = readPendingDesk();
+  return d === "all" ? new Set() : new Set([d as DeskId]);
+}
+
 export default function Home() {
   const { currentCity } = useCity();
   const citySlug = currentCity.slug;
-  const [desk, setDesk] = useState<"all" | DeskId>(() => readPendingDesk());
+
+  // Multi-select set of desks. Empty set == "All" (no filter).
+  const [selectedDesks, setSelectedDesks] = useState<Set<DeskId>>(() => initialDeskSet());
+
+  // Toggle a desk in/out of the selection. Pass null to clear (= "All").
+  const toggleDesk = (d: DeskId | null) => {
+    setSelectedDesks((prev) => {
+      if (d === null) return new Set();
+      const next = new Set(prev);
+      if (next.has(d)) next.delete(d);
+      else next.add(d);
+      return next;
+    });
+  };
 
   useEffect(() => {
     function onHashChange() {
       const next = readPendingDesk();
-      if (next !== "all") setDesk(next);
+      if (next !== "all") setSelectedDesks(new Set([next as DeskId]));
     }
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -75,16 +94,26 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [query]);
 
+  // Sorted, stable representation of the desk selection — used in query keys
+  // + URL param so the same combo always hits the same cache entry.
+  const sortedDesks = useMemo(
+    () => [...selectedDesks].sort(),
+    [selectedDesks],
+  );
+  const desksParam = sortedDesks.join(",");
+
+  // Single-desk "section" modes (history pool, sorted-by-event-date, etc.)
+  // only apply when EXACTLY that desk is selected on its own. Once a user
+  // multi-selects, we drop back to the regular news-feed treatment.
+  const isHistoryDesk = selectedDesks.size === 1 && selectedDesks.has("history");
+  const isPeopleDesk = selectedDesks.size === 1 && selectedDesks.has("people");
+  const isEventsDesk = selectedDesks.size === 1 && selectedDesks.has("entertainment");
+
   useEffect(() => {
     setCursor(0);
     setItems([]);
     setNewPostsCount(0);
-  }, [desk, debounced, citySlug]);
-
-  // History + People desks: long-form articles come from /api/history (shared pool)
-  const isHistoryDesk = desk === "history";
-  const isPeopleDesk = desk === "people";
-  const isEventsDesk = desk === "entertainment";
+  }, [desksParam, debounced, citySlug]);
 
   const historyQuery = useQuery<HistoryStory[]>({
     queryKey: ["/api/history", isPeopleDesk ? "people" : "history", citySlug],
@@ -96,12 +125,13 @@ export default function Home() {
     enabled: isHistoryDesk || isPeopleDesk,
   });
 
-  // Regular feed query — used for all desks except history
+  // Regular feed query — used for everything except the dedicated single-desk
+  // history mode. Empty desksParam == "all". Comma-separated list when multi-select.
   const feed = useQuery<StoriesPage>({
-    queryKey: ["/api/stories", { desk, q: debounced, cursor, limit: 12, city: citySlug }],
+    queryKey: ["/api/stories", { desks: desksParam, q: debounced, cursor, limit: 12, city: citySlug }],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (desk !== "all") params.set("desk", desk);
+      if (desksParam) params.set("desks", desksParam);
       if (debounced) params.set("q", debounced);
       params.set("limit", "12");
       params.set("cursor", String(cursor));
@@ -255,8 +285,8 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-background">
       <TopBar
-        desk={desk}
-        onDeskChange={setDesk}
+        desks={selectedDesks}
+        onDeskToggle={toggleDesk}
         query={query}
         onQueryChange={setQuery}
         onOpenSources={() => setSourcesOpen(true)}
@@ -283,14 +313,24 @@ export default function Home() {
             <div className="mb-4 flex items-end justify-between gap-4">
               <div>
                 <h1 className="font-serif text-[1.65rem] leading-tight font-semibold tracking-tight text-foreground">
-                  {desk === "all" ? `Live from ${currentCity.displayName}` : DESK_META[desk as DeskId]?.label ?? desk}
+                  {(() => {
+                    if (selectedDesks.size === 0) return `Live from ${currentCity.displayName}`;
+                    if (selectedDesks.size === 1) {
+                      const only = sortedDesks[0] as DeskId;
+                      return DESK_META[only]?.label ?? only;
+                    }
+                    // Multi-select: list desk labels joined with ' + '
+                    return sortedDesks
+                      .map((d) => DESK_META[d as DeskId]?.label ?? d)
+                      .join(" + ");
+                  })()}
                 </h1>
-                {desk === "history" && (
+                {isHistoryDesk && (
                   <p className="mt-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
                     Curated stories · rotated weekly · rooted in archival fact
                   </p>
                 )}
-                {desk === "entertainment" && (
+                {isEventsDesk && (
                   <p className="mt-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
                     Upcoming events · sorted by date · past events hidden
                   </p>

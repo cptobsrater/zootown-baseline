@@ -159,8 +159,8 @@ export default function JobsPage() {
   return (
     <div className="min-h-screen bg-background">
       <TopBar
-        desk="all"
-        onDeskChange={() => {}}
+        desks={new Set()}
+        onDeskToggle={() => {}}
         query=""
         onQueryChange={() => {}}
         onOpenSources={() => setSourcesOpen(true)}

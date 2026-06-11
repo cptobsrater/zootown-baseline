@@ -50,7 +50,11 @@ export const db = drizzle(queryClient);
 
 // ------ Query types ------
 export interface StoryQuery {
+  // Single desk string. Use "all" or omit for unrestricted. Kept for back-compat.
   desk?: string;
+  // Multi-desk filter. When supplied, takes precedence over `desk` and returns
+  // any story whose desk is in this list. Empty array == "all".
+  desks?: string[];
   q?: string;
   limit?: number;
   cursor?: number;
@@ -358,7 +362,10 @@ export class DatabaseStorage implements IStorage {
     // Build WHERE using SQL fragments. Use parameterized queries for safety.
     const conditions: any[] = [];
     if (modState !== "all") conditions.push(eq(stories.modState, modState));
-    if (q.desk && q.desk !== "all") {
+    // Multi-desk OR single-desk filter. Multi takes precedence.
+    if (q.desks && q.desks.length > 0) {
+      conditions.push(inArray(stories.desk, q.desks));
+    } else if (q.desk && q.desk !== "all") {
       conditions.push(eq(stories.desk, q.desk));
     }
     if (q.cityId) conditions.push(eq(stories.cityId, q.cityId));

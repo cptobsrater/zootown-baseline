@@ -9,8 +9,10 @@ import { useCity } from "@/lib/city-context";
 import { MobileCalendarSheet } from "./MobileCalendarSheet";
 
 interface Props {
-  desk: "all" | DeskId;
-  onDeskChange: (d: "all" | DeskId) => void;
+  /** Set of currently-selected desks. Empty set == "All" (no filter). */
+  desks: Set<DeskId>;
+  /** Toggle a single desk. Pass null to clear all (i.e. select "All"). */
+  onDeskToggle: (d: DeskId | null) => void;
   query: string;
   onQueryChange: (q: string) => void;
   onOpenSources: () => void;
@@ -30,8 +32,8 @@ const TABS: Array<{ id: "all" | DeskId; label: string }> = [
 ];
 
 export function TopBar({
-  desk,
-  onDeskChange,
+  desks,
+  onDeskToggle,
   query,
   onQueryChange,
   onOpenSources,
@@ -45,15 +47,12 @@ export function TopBar({
   const onHome = /^\/[a-z_]+\/?$/i.test(location);
 
   // When user clicks a desk tab from a non-home page (Calendar, Jobs, Admin),
-  // route them home and pre-select the desk via hash search-param so the
-  // feed loads filtered to that desk. This stops the "stuck on Calendar" feel.
-  function handleDeskChange(id: "all" | DeskId) {
+  // route them home and pre-select the desk via window-stashed signal so the
+  // home page picks it up on mount. "All" clears the multi-selection.
+  function handleDeskClick(id: "all" | DeskId) {
     if (onHome) {
-      onDeskChange(id);
+      onDeskToggle(id === "all" ? null : id);
     } else {
-      // Stash the requested desk on the window so Home can pick it up on mount,
-      // then route home. (wouter's hash router treats `?` as part of the path,
-      // so we cannot smuggle a query string through the URL.)
       if (typeof window !== "undefined") {
         (window as any).__pendingDesk = id;
       }
@@ -126,14 +125,17 @@ export function TopBar({
       >
         <ul className="flex items-center gap-1 pb-1 text-sm">
           {TABS.map((t) => {
-            const active = desk === t.id;
+            // "All" is active when no desk is selected.
+            const active = t.id === "all"
+              ? desks.size === 0
+              : desks.has(t.id as DeskId);
             const underlineCls =
               t.id === "all" ? "bg-foreground" : `bg-desk-${t.id}`;
             return (
               <li key={t.id}>
                 <button
-                  onClick={() => handleDeskChange(t.id)}
-                  aria-current={active ? "page" : undefined}
+                  onClick={() => handleDeskClick(t.id)}
+                  aria-pressed={active}
                   data-testid={`tab-${t.id}`}
                   className={`relative whitespace-nowrap rounded-t-md px-3 py-2.5 text-sm font-medium transition-colors hover-elevate ${
                     active ? "text-foreground" : "text-muted-foreground"

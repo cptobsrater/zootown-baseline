@@ -43,6 +43,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/stories", async (req, res) => {
     const schema = z.object({
       desk: z.string().optional(),
+      // Multi-desk filter — comma-separated list of desk IDs.
+      // Server returns stories whose desk matches ANY of the listed values.
+      // Single-desk `desk` param is kept for back-compat and used when this is omitted.
+      desks: z.string().optional(),
       q: z.string().optional(),
       limit: z.coerce.number().int().min(1).max(50).optional(),
       cursor: z.coerce.number().int().min(0).optional(),
@@ -54,7 +58,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const parsed = schema.safeParse(req.query);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const cityId = await resolveCityId(parsed.data.city);
-    const result = await storage.listStories({ ...parsed.data, cityId });
+    const desksArr = parsed.data.desks
+      ? parsed.data.desks.split(",").map((s) => s.trim()).filter(Boolean)
+      : undefined;
+    const result = await storage.listStories({ ...parsed.data, desks: desksArr, cityId });
     // Annotate each story with its source count so feed cards can show "+N sources".
     const items = await Promise.all(
       result.items.map(async (s) => ({ ...s, sourceCount: await storage.countStorySources(s.id) })),

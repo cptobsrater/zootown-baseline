@@ -199,8 +199,8 @@ export default function CalendarPage() {
   return (
     <div className="min-h-screen bg-background">
       <TopBar
-        desk="all"
-        onDeskChange={(d) => setHomeDesk(d)}
+        desks={new Set()}
+        onDeskToggle={() => { /* tab clicks are handled inside TopBar via navigate-to-home */ }}
         query={query}
         onQueryChange={setQuery}
         onOpenSources={() => {}}
