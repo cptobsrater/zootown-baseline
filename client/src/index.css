@@ -55,7 +55,7 @@
   /* Desk accents */
   --desk-city: 212 60% 36%;            /* Clark Fork blue */
   --desk-city-fg: 210 100% 97%;
-  --desk-business: 28 74% 44%;         /* copper / downtown brick */
+  --desk-business: 38 82% 44%;         /* amber — brighter, cleaner than copper */
   --desk-business-fg: 36 24% 97%;
   --desk-culture: 158 52% 28%;         /* sagebrush */
   --desk-culture-fg: 36 24% 97%;
@@ -74,7 +74,7 @@
   --desk-entertainment-fg: 36 24% 97%;
   --desk-people: 270 50% 50%;          /* violet */
   --desk-people-fg: 36 24% 97%;
-  --desk-history: 25 35% 35%;          /* sepia */
+  --desk-history: 48 78% 42%;          /* goldenrod / aged-paper yellow */
   --desk-history-fg: 36 24% 97%;
   --desk-science_tech: 200 70% 40%;    /* cyan */
   --desk-science_tech-fg: 36 24% 97%;
@@ -162,7 +162,7 @@
 
   --desk-city: 212 72% 62%;
   --desk-city-fg: 220 28% 7%;
-  --desk-business: 28 78% 60%;
+  --desk-business: 38 86% 62%;         /* amber (dark mode) */
   --desk-business-fg: 220 28% 7%;
   --desk-culture: 158 46% 55%;
   --desk-culture-fg: 220 28% 7%;
@@ -181,7 +181,7 @@
   --desk-entertainment-fg: 220 28% 7%;
   --desk-people: 270 55% 68%;
   --desk-people-fg: 220 28% 7%;
-  --desk-history: 25 42% 52%;
+  --desk-history: 48 82% 60%;          /* goldenrod (dark mode) */
   --desk-history-fg: 220 28% 7%;
   --desk-science_tech: 200 72% 56%;
   --desk-science_tech-fg: 220 28% 7%;
