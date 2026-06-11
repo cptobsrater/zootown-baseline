@@ -95,6 +95,16 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
         const debug = process.env.AUTH_DEBUG === "1" ? { tokenPrefix: token?.slice(0, 8), hadAuth: !!auth, matched: !!match } : undefined;
         return res.status(401).json({ error: "Unauthorized", debug });
       }
+      // Attach a stable per-token identifier so downstream routes can scope
+      // "personal" data to the admin who's logged in. We use the first 16
+      // chars of the token so the full secret never reaches business logic
+      // or analytics events. If the admin rotates their token (logout +
+      // login), they effectively become a new identity — acceptable for an
+      // editorial cockpit where ownership is convenience, not a security
+      // boundary (the boundary IS requireAdmin itself).
+      if (token) {
+        (req as any).adminId = `t_${token.slice(0, 16)}`;
+      }
       next();
     })
     .catch((err) => {

@@ -304,6 +304,187 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ ok: true });
   });
 
+  // ===== Phase 6: Editorial cockpit (feed presets) =====
+  //
+  // Saved composite-feed recipes that admins use to triage. Each preset
+  // bundles a city scope, desk multi-select, mod state, query, time window,
+  // sort, and display options into a single named filter that can be
+  // one-click applied. The storage layer (listStoriesByPreset /
+  // createFeedPreset etc.) is in server/storage.ts; this section exposes
+  // it over HTTP and gates everything behind requireAdmin.
+
+  // Lazy import to avoid a circular type ref at load time.
+  const { feedPresetConfigSchema: _fpc, insertFeedPresetSchema: _fpi } =
+    await import("../shared/schema.js");
+  const feedPresetConfigSchema = _fpc;
+  const insertFeedPresetSchema = _fpi;
+
+  // GET /api/admin/presets
+  // Lists presets visible to the current admin: their own personal presets
+  // PLUS any shared/org presets, optionally scoped by city.
+  app.get("/api/admin/presets", requireAdmin, async (req, res) => {
+    const ownerId = (req as any).adminId as string | undefined;
+    const cityId = req.query.cityId ? Number(req.query.cityId) : undefined;
+    const includeInactive = req.query.includeInactive === "true";
+    const presets = await storage.listFeedPresets({
+      ownerId,
+      cityId: Number.isFinite(cityId) ? (cityId as number) : undefined,
+      includeInactive,
+    });
+    res.json({ presets });
+  });
+
+  // POST /api/admin/presets/preview
+  // Live preview of a composite query WITHOUT saving. Used by the cockpit
+  // editor to render the right-pane story list as the admin tweaks filters.
+  app.post("/api/admin/presets/preview", requireAdmin, async (req, res) => {
+    const previewSchema = z.object({
+      config: feedPresetConfigSchema,
+      cityId: z.number().int().positive().optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+      queryOverride: z.string().max(200).optional(),
+    });
+    const parsed = previewSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: "Invalid preview request", details: parsed.error.flatten() });
+    }
+    const result = await storage.listStoriesByPreset(parsed.data.config, {
+      cityId: parsed.data.cityId,
+      limit: parsed.data.limit ?? 50,
+      queryOverride: parsed.data.queryOverride,
+    });
+    res.json(result);
+  });
+
+  // POST /api/admin/presets
+  // Save a new preset. Server stamps ownerId from the admin session so an
+  // admin can never create a personal preset for someone else.
+  app.post("/api/admin/presets", requireAdmin, async (req, res) => {
+    const ownerId = ((req as any).adminId as string | undefined) ?? null;
+    const input = {
+      ...(req.body ?? {}),
+      ownerId: req.body?.scope === "personal" ? ownerId : (req.body?.ownerId ?? null),
+      slug:
+        (req.body?.slug ?? req.body?.name ?? "")
+          .toString()
+          .toLowerCase()
+          .replace(/[^a-z0-9-]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 60) || `preset-${Date.now()}`,
+    };
+    const parsed = insertFeedPresetSchema.safeParse(input);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: "Invalid preset", details: parsed.error.flatten() });
+    }
+    try {
+      const preset = await storage.createFeedPreset(parsed.data as any);
+      await storage.recordFeedPresetEvent({
+        presetId: preset.id,
+        adminId: ownerId,
+        cityId: preset.cityId ?? null,
+        action: "save",
+        config: preset.config,
+      });
+      res.status(201).json({ preset });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res
+          .status(409)
+          .json({ error: "A preset with that name or slug already exists." });
+      }
+      throw err;
+    }
+  });
+
+  // PATCH /api/admin/presets/:id
+  // Partial update. Server bumps config_version automatically when the
+  // config payload changes (see storage.updateFeedPreset).
+  app.patch("/api/admin/presets/:id", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const patchSchema = z.object({
+      name: z.string().min(1).max(200).optional(),
+      slug: z.string().min(1).max(80).optional(),
+      scope: z.enum(["personal", "shared", "org"]).optional(),
+      config: feedPresetConfigSchema.optional(),
+      cityId: z.number().int().positive().nullable().optional(),
+      sortOrder: z.number().int().optional(),
+      isActive: z.boolean().optional(),
+    });
+    const parsed = patchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: "Invalid patch", details: parsed.error.flatten() });
+    }
+    const updated = await storage.updateFeedPreset(id, parsed.data as any);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    const ownerId = ((req as any).adminId as string | undefined) ?? null;
+    await storage.recordFeedPresetEvent({
+      presetId: updated.id,
+      adminId: ownerId,
+      cityId: updated.cityId ?? null,
+      action: "update",
+      config: updated.config,
+    });
+    res.json({ preset: updated });
+  });
+
+  // POST /api/admin/presets/:id/apply
+  // Telemetry-only. The actual filter is applied client-side by reading
+  // the preset's config. This endpoint records that the admin clicked
+  // Apply so the suggestion engine can learn from real usage patterns.
+  app.post("/api/admin/presets/:id/apply", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const preset = await storage.getFeedPreset(id);
+    if (!preset) return res.status(404).json({ error: "Not found" });
+    const ownerId = ((req as any).adminId as string | undefined) ?? null;
+    const ev = await storage.recordFeedPresetEvent({
+      presetId: preset.id,
+      adminId: ownerId,
+      cityId: preset.cityId ?? null,
+      action: "apply",
+      config: preset.config,
+    });
+    res.json({ ok: true, event: ev });
+  });
+
+  // DELETE /api/admin/presets/:id (soft delete; flips is_active=false)
+  app.delete("/api/admin/presets/:id", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const preset = await storage.getFeedPreset(id);
+    if (!preset) return res.status(404).json({ error: "Not found" });
+    const ok = await storage.softDeleteFeedPreset(id);
+    if (!ok) return res.status(404).json({ error: "Not found" });
+    const ownerId = ((req as any).adminId as string | undefined) ?? null;
+    await storage.recordFeedPresetEvent({
+      presetId: id,
+      adminId: ownerId,
+      cityId: preset.cityId ?? null,
+      action: "delete",
+      config: preset.config,
+    });
+    res.json({ ok: true });
+  });
+
+  // GET /api/admin/preset-signatures
+  // Top filter signatures across the org over the last N days. Used by the
+  // cockpit's "Suggested presets" sidebar so admins can adopt patterns
+  // that other admins have converged on.
+  app.get("/api/admin/preset-signatures", requireAdmin, async (req, res) => {
+    const days = Math.min(Number(req.query.days ?? 14), 365);
+    const limit = Math.min(Number(req.query.limit ?? 10), 50);
+    res.json({
+      signatures: await storage.topFilterSignatures({ sinceDays: days, limit }),
+    });
+  });
+
   // Edit log + patterns (for the "learning from manual edits" panel)
   app.get("/api/admin/edits", requireAdmin, async (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
