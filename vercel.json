@@ -18,7 +18,7 @@
   "functions": {
     "api/[...path].ts": { "maxDuration": 30 },
     "api/story-preview.ts": { "maxDuration": 10 },
-    "api/og-image.tsx": { "maxDuration": 15 },
+    "api/og-image.ts": { "maxDuration": 15 },
     "api/cron/ingest.ts": { "maxDuration": 60 },
     "api/cron/daily-writer.ts": { "maxDuration": 30 },
     "api/cron/rotate-history.ts": { "maxDuration": 30 }

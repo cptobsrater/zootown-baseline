@@ -1,26 +1,20 @@
 /**
  * Dynamic Open Graph image generator for shared story links.
  *
- * Renders a 1200x630 PNG via @vercel/og + Satori (Node runtime), used by
- * the meta tag generated in api/story-preview.ts. Each story gets a unique
- * image with:
- *   - The story headline rendered in a large serif (truncated to fit)
- *   - The city name in the city's brand color across the top
- *   - The desk badge in the desk's brand color
- *   - The ZooTown wordmark at bottom-right
- *   - A subtle per-city background gradient so the 10 cities look distinct
+ * Renders a 1200x630 PNG via @vercel/og + Satori (Node runtime).
  *
  * URL contract: /api/og-image?storyId=1604
- * Cached aggressively because the contents only change when the headline
- * is edited, which is rare.
+ *
+ * Implementation note: this file is .ts (not .tsx) and uses
+ * React.createElement directly instead of JSX so it compiles cleanly under
+ * Vercel's default Node runtime without needing a JSX transform.
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { unstable_createNodejsStream } from "@vercel/og";
 import React from "react";
 
-// Per-city brand colors. Used as the accent across the top of the share
-// card so each of the 10 cities has a recognizable visual identity in
-// social previews.
+// Per-city brand colors. Each of the 10 cities has a unique accent + tint
+// so shared cards are immediately recognizable.
 const CITY_COLORS: Record<string, { accent: string; tint: string; name: string }> = {
   missoula:    { accent: "#3b82f6", tint: "#0b1e3a", name: "Missoula"    },
   billings:    { accent: "#e0883b", tint: "#3a1a0b", name: "Billings"    },
@@ -35,14 +29,14 @@ const CITY_COLORS: Record<string, { accent: string; tint: string; name: string }
 };
 
 const DESK_COLORS: Record<string, string> = {
-  city:          "#3b82f6", // blue
-  business:      "#10b981", // cash green
-  crime:         "#dc2626", // red
-  sports:        "#facc15", // stoplight yellow
-  health:        "#06b6d4", // teal
-  entertainment: "#ec4899", // magenta
-  people:        "#a78bfa", // violet
-  history:       "#94a3b8", // silver
+  city:          "#3b82f6",
+  business:      "#10b981",
+  crime:         "#dc2626",
+  sports:        "#facc15",
+  health:        "#06b6d4",
+  entertainment: "#ec4899",
+  people:        "#a78bfa",
+  history:       "#94a3b8",
 };
 
 const CITY_BY_ID: Record<number, string> = {
@@ -63,6 +57,9 @@ function originFromReq(req: VercelRequest): string {
 function normalizeText(s: string): string {
   return s.replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"');
 }
+
+// Tiny helper so the createElement tree below stays readable.
+const h = React.createElement;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -92,13 +89,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const city = CITY_COLORS[citySlug] ?? CITY_COLORS.missoula;
     const deskColor = DESK_COLORS[desk] ?? DESK_COLORS.city;
-    const displayHeadline = headline.length > 140 ? headline.slice(0, 137) + "..." : headline;
-    const displaySource = sourceName.length > 60 ? sourceName.slice(0, 57) + "..." : sourceName;
+    const displayHeadline =
+      headline.length > 140 ? headline.slice(0, 137) + "..." : headline;
+    const displaySource =
+      sourceName.length > 60 ? sourceName.slice(0, 57) + "..." : sourceName;
     const headlineFontSize = displayHeadline.length > 80 ? 56 : 72;
 
-    const element = (
-      <div
-        style={{
+    // Build the element tree via React.createElement instead of JSX so the
+    // file compiles cleanly under Vercel's default Node runtime.
+    const element = h(
+      "div",
+      {
+        style: {
           width: "100%",
           height: "100%",
           display: "flex",
@@ -108,43 +110,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           background: `linear-gradient(135deg, ${city.tint} 0%, #050a14 100%)`,
           color: "#f5f1e8",
           fontFamily: "serif",
-        }}
-      >
-        {/* Top row: city + desk badge */}
-        <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 16,
-              fontSize: 28,
+        },
+      },
+      // Top row: city + desk badge
+      h(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            fontSize: 28,
+            fontWeight: 700,
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: city.accent,
+          },
+        },
+        h("span", null, city.name),
+        h("span", { style: { opacity: 0.5 } }, "\u00b7"),
+        h(
+          "span",
+          {
+            style: {
+              background: deskColor,
+              color: "#0b0b0b",
+              padding: "6px 18px",
+              borderRadius: 999,
+              fontSize: 22,
               fontWeight: 700,
-              letterSpacing: "0.18em",
-              textTransform: "uppercase",
-              color: city.accent,
-            }}
-          >
-            <span>{city.name}</span>
-            <span style={{ opacity: 0.5 }}>·</span>
-            <span
-              style={{
-                background: deskColor,
-                color: "#0b0b0b",
-                padding: "6px 18px",
-                borderRadius: 999,
-                fontSize: 22,
-                fontWeight: 700,
-                letterSpacing: "0.14em",
-              }}
-            >
-              {desk.toUpperCase()}
-            </span>
-          </div>
-        </div>
-
-        {/* Headline */}
-        <div
-          style={{
+              letterSpacing: "0.14em",
+            },
+          },
+          desk.toUpperCase(),
+        ),
+      ),
+      // Headline
+      h(
+        "div",
+        {
+          style: {
             display: "flex",
             fontSize: headlineFontSize,
             fontWeight: 700,
@@ -152,32 +157,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             color: "#fafafa",
             fontFamily: "serif",
             letterSpacing: "-0.01em",
-          }}
-        >
-          {displayHeadline}
-        </div>
-
-        {/* Bottom row: source + ZooTown wordmark */}
-        <div
-          style={{
+          },
+        },
+        displayHeadline,
+      ),
+      // Bottom row: source + ZooTown wordmark
+      h(
+        "div",
+        {
+          style: {
             display: "flex",
             justifyContent: "space-between",
             alignItems: "flex-end",
-          }}
-        >
-          <div
-            style={{
+          },
+        },
+        h(
+          "div",
+          {
+            style: {
               display: "flex",
               fontSize: 26,
               color: "rgba(245, 241, 232, 0.7)",
               fontFamily: "sans-serif",
-            }}
-          >
-            {displaySource}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div
-              style={{
+            },
+          },
+          displaySource,
+        ),
+        h(
+          "div",
+          {
+            style: { display: "flex", alignItems: "center", gap: 14 },
+          },
+          h(
+            "div",
+            {
+              style: {
                 display: "flex",
                 width: 56,
                 height: 56,
@@ -190,24 +204,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 alignItems: "center",
                 justifyContent: "center",
                 lineHeight: 1,
-              }}
-            >
-              Z
-            </div>
-            <div
-              style={{
+              },
+            },
+            "Z",
+          ),
+          h(
+            "div",
+            {
+              style: {
                 display: "flex",
                 fontSize: 36,
                 fontWeight: 700,
                 fontFamily: "serif",
                 color: "#f5f1e8",
-              }}
-            >
-              ZooTown
-            </div>
-          </div>
-        </div>
-      </div>
+              },
+            },
+            "ZooTown",
+          ),
+        ),
+      ),
     );
 
     const stream = await unstable_createNodejsStream(element, {
