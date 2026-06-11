@@ -168,19 +168,53 @@ function mountainOffsetHours(year: number, month0: number, day: number): number 
   return probe >= dstStart && probe < dstEnd ? -6 : -7;
 }
 
+// Venue substrings used to recognize each of the four named Logjam venues
+// on a detail page. Each venue has its own dedicated source row (KettleHouse,
+// Wilma, Top Hat, ELM) with the right city_id, so the umbrella feed should
+// NOT also import them — doing so stamps the wrong city (e.g. an ELM show
+// in Bozeman getting city_id=missoula because the umbrella source lives in
+// Missoula). The umbrella becomes a true catch-all for pop-ups + off-site
+// events that don't match any of these venues.
+const LOGJAM_VENUE_PATTERNS = {
+  kettlehouse: /kettlehouse/i,
+  wilma: /wilma/i,
+  elm: /\bELM\b/,
+  topHat: /top\s*hat/i,
+};
+const LOGJAM_ANY_NAMED_VENUE_RE =
+  /(kettlehouse|wilma|\bELM\b|top\s*hat)/i;
+
 /**
- * Map a registered source (KettleHouse, Wilma, ELM, Top Hat, or the
- * umbrella "Logjam Presents") to the venue substring we expect to see
- * on the detail page. Returns null for the umbrella feed (accept all).
+ * Decide whether to keep a Logjam event for a particular source.
+ *
+ * - KettleHouse / Wilma / ELM / Top Hat sources: keep only events whose
+ *   parsed venue matches that name. Cross-venue events get rejected.
+ * - "Logjam Presents" umbrella source: REJECT events whose venue matches
+ *   one of the four named venues (those belong to the dedicated source
+ *   row with the correct city_id). Keep everything else (pop-ups,
+ *   off-site, unknown venue) as the catch-all.
  */
-function logjamVenueFilter(source: Source): RegExp | null {
+function shouldKeepLogjamEvent(
+  source: Source,
+  parsedVenue: string | null,
+): boolean {
   const name = (source.name || "").toLowerCase();
-  if (name.includes("kettlehouse")) return /kettlehouse/i;
-  if (name.includes("wilma")) return /wilma/i;
-  if (name.includes("elm")) return /\bELM\b/;
-  if (name.includes("top hat")) return /top\s*hat/i;
-  // "Logjam Presents" without a venue qualifier = umbrella feed; accept all.
-  return null;
+  if (name.includes("kettlehouse")) {
+    return !!parsedVenue && LOGJAM_VENUE_PATTERNS.kettlehouse.test(parsedVenue);
+  }
+  if (name.includes("wilma")) {
+    return !!parsedVenue && LOGJAM_VENUE_PATTERNS.wilma.test(parsedVenue);
+  }
+  if (name.includes("elm")) {
+    return !!parsedVenue && LOGJAM_VENUE_PATTERNS.elm.test(parsedVenue);
+  }
+  if (name.includes("top hat")) {
+    return !!parsedVenue && LOGJAM_VENUE_PATTERNS.topHat.test(parsedVenue);
+  }
+  // Umbrella "Logjam Presents" source: skip anything attributable to one of
+  // the four named venues; those are owned by their dedicated source rows.
+  if (parsedVenue && LOGJAM_ANY_NAMED_VENUE_RE.test(parsedVenue)) return false;
+  return true;
 }
 
 /**
@@ -262,7 +296,6 @@ async function logjamDetailParser(html: string, source: Source): Promise<RawItem
   const urls = Array.from(urlSet).slice(0, 25);
 
   // ---- Stage 2: fetch each detail page (concurrency=4) ----
-  const venueFilter = logjamVenueFilter(source);
   const items: RawItem[] = [];
   const CONCURRENCY = 4;
   let cursor = 0;
@@ -277,8 +310,10 @@ async function logjamDetailParser(html: string, source: Source): Promise<RawItem
         const detailHtml = await res.text();
         const parsed = extractLogjamDetail(eventUrl, detailHtml);
         if (!parsed) continue;
-        // Per-source venue filter: skip events at other Logjam venues.
-        if (venueFilter && parsed.venue && !venueFilter.test(parsed.venue)) {
+        // Per-source filter: keep KettleHouse/Wilma/ELM/Top Hat only on the
+        // matching named source; the umbrella source skips any event whose
+        // venue belongs to one of those four (avoids cross-city misattribution).
+        if (!shouldKeepLogjamEvent(source, parsed.venue)) {
           continue;
         }
         const summaryParts: string[] = [parsed.startsAtIso];
