@@ -55,7 +55,7 @@
   /* Desk accents */
   --desk-city: 212 60% 36%;            /* Clark Fork blue */
   --desk-city-fg: 210 100% 97%;
-  --desk-business: 38 82% 44%;         /* amber — brighter, cleaner than copper */
+  --desk-business: 145 65% 35%;        /* cash green — money/markets */
   --desk-business-fg: 36 24% 97%;
   --desk-culture: 158 52% 28%;         /* sagebrush */
   --desk-culture-fg: 36 24% 97%;
@@ -65,8 +65,8 @@
   --desk-community-fg: 36 24% 97%;
   --desk-politics: 220 40% 30%;        /* neutral deep slate-navy */
   --desk-politics-fg: 36 24% 97%;
-  --desk-sports: 142 58% 32%;          /* turf/forest green — distinct from business copper */
-  --desk-sports-fg: 36 24% 97%;
+  --desk-sports: 48 95% 50%;           /* stoplight yellow */
+  --desk-sports-fg: 220 28% 7%;        /* dark text on bright yellow for legibility */
   --desk-health: 188 64% 30%;          /* clinical teal */
   --desk-health-fg: 36 24% 97%;
 
@@ -74,8 +74,8 @@
   --desk-entertainment-fg: 36 24% 97%;
   --desk-people: 270 50% 50%;          /* violet */
   --desk-people-fg: 36 24% 97%;
-  --desk-history: 48 78% 42%;          /* goldenrod / aged-paper yellow */
-  --desk-history-fg: 36 24% 97%;
+  --desk-history: 220 8% 55%;          /* silver / archival neutral */
+  --desk-history-fg: 220 28% 7%;       /* dark text on silver */
   --desk-science_tech: 200 70% 40%;    /* cyan */
   --desk-science_tech-fg: 36 24% 97%;
 
@@ -162,7 +162,7 @@
 
   --desk-city: 212 72% 62%;
   --desk-city-fg: 220 28% 7%;
-  --desk-business: 38 86% 62%;         /* amber (dark mode) */
+  --desk-business: 145 55% 52%;        /* cash green (dark mode) */
   --desk-business-fg: 220 28% 7%;
   --desk-culture: 158 46% 55%;
   --desk-culture-fg: 220 28% 7%;
@@ -172,7 +172,7 @@
   --desk-community-fg: 220 28% 7%;
   --desk-politics: 220 50% 68%;
   --desk-politics-fg: 220 28% 7%;
-  --desk-sports: 142 52% 55%;          /* turf green (dark mode) — distinct from business copper */
+  --desk-sports: 48 92% 58%;           /* stoplight yellow (dark mode) */
   --desk-sports-fg: 220 28% 7%;
   --desk-health: 188 60% 56%;
   --desk-health-fg: 220 28% 7%;
@@ -181,7 +181,7 @@
   --desk-entertainment-fg: 220 28% 7%;
   --desk-people: 270 55% 68%;
   --desk-people-fg: 220 28% 7%;
-  --desk-history: 48 82% 60%;          /* goldenrod (dark mode) */
+  --desk-history: 220 10% 68%;         /* silver (dark mode) */
   --desk-history-fg: 220 28% 7%;
   --desk-science_tech: 200 72% 56%;
   --desk-science_tech-fg: 220 28% 7%;
