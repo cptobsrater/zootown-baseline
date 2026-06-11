@@ -7,7 +7,7 @@ import {
   parseTags,
   relativeTime,
   absoluteDate,
-  formatEventDate,
+  formatEventRange,
 } from "@/lib/format";
 import { DeskBadge } from "./DeskBadge";
 import { ExternalLink, Layers, MapPin, Scale } from "lucide-react";
@@ -89,9 +89,17 @@ export function StoryCard({ story, onOpen }: Props) {
         className="mt-3 font-serif text-[1.18rem] leading-snug font-semibold text-foreground group-hover:text-primary transition-colors"
         data-testid={`text-headline-${story.id}`}
       >
-        {story.desk === "entertainment" && (story as any).eventDate && (
-          <span className="mr-1 font-mono text-[0.72rem] font-bold uppercase tracking-[0.1em] text-[hsl(var(--desk-entertainment))]">
-            {formatEventDate((story as any).eventDate)} —{" "}
+        {/*
+          For any calendar event (any desk) with a real startsAt, prefix the
+          headline with "Mon, Jun 22, 3:00 PM —" so the reader sees WHEN the
+          event happens, not when the story was published. Colored to match
+          the row's own desk so it stays visually grouped with the badge.
+        */}
+        {story.onCalendar && story.startsAt && (
+          <span
+            className={`mr-1 font-mono text-[0.72rem] font-bold uppercase tracking-[0.1em] text-[hsl(var(--desk-${desk}))]`}
+          >
+            {formatEventRange(story.startsAt, story.endsAt)} —{" "}
           </span>
         )}
         {story.headline}

@@ -1,7 +1,7 @@
 import type { Story, StorySource } from "@shared/schema";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { DESK_META, type DeskId, parseTags, absoluteDate, relativeTime } from "@/lib/format";
+import { DESK_META, type DeskId, parseTags, absoluteDate, relativeTime, formatEventRange } from "@/lib/format";
 import { DeskBadge } from "./DeskBadge";
 import { Sheet, SheetContent, SheetHeader } from "@/components/ui/sheet";
 import { ExternalLink, MapPin, Clock, ShieldCheck, Layers, BookOpen } from "lucide-react";
@@ -57,28 +57,43 @@ export function StoryDrawer({ story, open, onOpenChange, related = [], onOpenRel
           <div className="flex items-center gap-3">
             <DeskBadge desk={desk} size="md" />
             <span className="text-[0.64rem] font-mono text-muted-foreground">·</span>
-            <time
-              title={absoluteDate(story.publishedAt)}
-              className="inline-flex items-center gap-1 text-xs font-mono text-muted-foreground"
-            >
-              <Clock className="h-3 w-3" />
-              {relativeTime(story.publishedAt)}
-            </time>
-            {story.status && (
-              <>
-                <span className="text-[0.64rem] font-mono text-muted-foreground">·</span>
-                <span className="inline-flex items-center rounded-full border border-foreground/15 bg-foreground/5 px-2 py-0.5 text-[0.64rem] font-medium">
-                  {story.status}
-                </span>
-              </>
+            {/*
+              Calendar events get their START time in the chip (matching the
+              calendar grid + the public expectation for "event"). Everything
+              else falls back to the "posted N min ago" relative-time chip.
+            */}
+            {story.onCalendar && story.startsAt ? (
+              <time
+                title={absoluteDate(story.startsAt)}
+                className="inline-flex items-center gap-1 text-xs font-mono text-muted-foreground"
+              >
+                <Clock className="h-3 w-3" />
+                {formatEventRange(story.startsAt, story.endsAt)}
+              </time>
+            ) : (
+              <time
+                title={absoluteDate(story.publishedAt)}
+                className="inline-flex items-center gap-1 text-xs font-mono text-muted-foreground"
+              >
+                <Clock className="h-3 w-3" />
+                {relativeTime(story.publishedAt)}
+              </time>
             )}
+            {/* Status pill (Event/New/Updated/Developing) removed: the meta
+                line + the bottom-row source pill already convey that. */}
           </div>
           <h2 className="font-serif text-[1.7rem] leading-tight font-semibold text-foreground">
             {story.headline}
           </h2>
-          <p className="text-xs text-muted-foreground">
-            {deskMeta.label} · Published {absoluteDate(story.publishedAt)}
-          </p>
+          {story.onCalendar && story.startsAt ? (
+            <p className="text-xs text-muted-foreground">
+              {deskMeta.label} · Starts {formatEventRange(story.startsAt, story.endsAt)}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {deskMeta.label} · Published {absoluteDate(story.publishedAt)}
+            </p>
+          )}
         </SheetHeader>
 
         <div className="px-6 pb-10 pt-2 space-y-6">

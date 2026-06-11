@@ -45,6 +45,56 @@ export function formatEventDate(iso: string): string {
   });
 }
 
+/**
+ * Format an event time range for the story detail view.
+ *
+ *   formatEventRange("2026-06-22T21:00Z")                   -> "Mon, Jun 22, 3:00 PM"
+ *   formatEventRange("2026-06-22T21:00Z", "2026-06-22T23:00Z")
+ *                                                           -> "Mon, Jun 22, 3:00 – 5:00 PM"
+ *   formatEventRange("2026-06-22T21:00Z", "2026-06-23T01:00Z")
+ *                                                           -> "Mon, Jun 22, 3:00 PM – Tue, Jun 23, 7:00 PM"
+ *
+ * Trims the AM/PM marker on the start time when start & end share the same
+ * meridiem on the same day, which is the common case for venue/calendar events.
+ */
+export function formatEventRange(startIso: string, endIso?: string | null): string {
+  const start = new Date(startIso);
+  const startStr = start.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  if (!endIso) return startStr;
+  const end = new Date(endIso);
+  const sameDay =
+    start.getFullYear() === end.getFullYear() &&
+    start.getMonth() === end.getMonth() &&
+    start.getDate() === end.getDate();
+  if (!sameDay) {
+    const endStr = end.toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    return `${startStr} – ${endStr}`;
+  }
+  const endStr = end.toLocaleString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  // Same day: collapse to "3:00 – 5:00 PM" when both share AM/PM marker.
+  const startMeridiem = startStr.match(/(AM|PM)$/i)?.[1] ?? "";
+  const endMeridiem = endStr.match(/(AM|PM)$/i)?.[1] ?? "";
+  if (startMeridiem && startMeridiem.toUpperCase() === endMeridiem.toUpperCase()) {
+    return `${startStr.replace(/\s*(AM|PM)$/i, "")} – ${endStr}`;
+  }
+  return `${startStr} – ${endStr}`;
+}
+
 export function parseTags(raw: string): string[] {
   try {
     const v = JSON.parse(raw);
