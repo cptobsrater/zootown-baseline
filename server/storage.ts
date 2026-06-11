@@ -5,7 +5,12 @@
  * Tables are created via Supabase migrations (managed separately) — this
  * module does NOT create tables; it only reads/writes.
  */
-import { stories, events, sources, ingestRuns, storySources, storyEdits, historyStories, classificationRules, meta, cities } from "../shared/schema.js";
+import {
+  stories, events, sources, ingestRuns, storySources, storyEdits,
+  historyStories, classificationRules, meta, cities,
+  feedPresets, feedPresetEvents,
+  buildFilterSignature,
+} from "../shared/schema.js";
 import type {
   Story,
   InsertStory,
@@ -24,10 +29,16 @@ import type {
   JobPostState,
   ClassificationRule,
   City,
+  FeedPreset,
+  InsertFeedPreset,
+  FeedPresetConfig,
+  FeedPresetEvent,
+  InsertFeedPresetEvent,
+  FeedPresetAction,
 } from "../shared/schema.js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq, desc, asc, and, gte, or, isNull, sql, inArray, ne } from "drizzle-orm";
+import { eq, desc, asc, and, gte, lte, lt, or, isNull, sql, inArray, ne } from "drizzle-orm";
 import { jobPosts } from "../shared/schema.js";
 
 // ------ Connection ------
@@ -92,6 +103,19 @@ function rowToStory(r: any): Story {
     isReviewed: r.is_reviewed === true || r.is_reviewed === 1 || r.isReviewed === true,
     reviewedAt: r.reviewed_at ?? r.reviewedAt ?? null,
     cityId: r.city_id ?? r.cityId ?? null,
+    // Phase 6: classifier signals (default to 1.0 / [] for legacy rows).
+    confidence: (() => {
+      const raw = r.confidence;
+      if (raw == null) return "1.00";
+      // Postgres NUMERIC returns string via postgres-js — keep string for the
+      // type but coerce 0..1 number if it came that way.
+      return typeof raw === "number" ? raw.toFixed(2) : String(raw);
+    })() as any,
+    altDesks: Array.isArray(r.alt_desks)
+      ? (r.alt_desks as string[])
+      : Array.isArray(r.altDesks)
+      ? (r.altDesks as string[])
+      : [],
   };
 }
 
@@ -334,6 +358,37 @@ export interface IStorage {
   countJobPosts(state?: JobPostState): Promise<number>;
   getMeta(key: string): Promise<string | null>;
   setMeta(key: string, value: string): Promise<void>;
+  // Phase 6: feed presets + composite-feed query
+  listStoriesByPreset(
+    config: FeedPresetConfig,
+    opts?: { cityId?: number; cursor?: number; limit?: number; queryOverride?: string },
+  ): Promise<{ items: Story[]; nextCursor: number | null; total: number }>;
+  createFeedPreset(input: InsertFeedPreset): Promise<FeedPreset>;
+  getFeedPreset(id: number): Promise<FeedPreset | undefined>;
+  listFeedPresets(opts?: {
+    ownerId?: string | null;
+    cityId?: number | null;
+    includeInactive?: boolean;
+  }): Promise<FeedPreset[]>;
+  updateFeedPreset(
+    id: number,
+    patch: Partial<Omit<InsertFeedPreset, "ownerId">>,
+  ): Promise<FeedPreset | undefined>;
+  softDeleteFeedPreset(id: number): Promise<boolean>;
+  reorderFeedPresets(items: Array<{ id: number; sortOrder: number }>): Promise<void>;
+  recordFeedPresetEvent(input: {
+    presetId?: number | null;
+    cityId?: number | null;
+    adminId?: string | null;
+    action: FeedPresetAction;
+    config: FeedPresetConfig | null;
+    payload?: Record<string, unknown> | null;
+  }): Promise<FeedPresetEvent>;
+  topFilterSignatures(opts?: {
+    sinceDays?: number;
+    cityId?: number | null;
+    limit?: number;
+  }): Promise<Array<{ filterSignature: string; uses: number }>>;
 }
 
 // ------ DatabaseStorage implementation ------
@@ -921,6 +976,299 @@ export class DatabaseStorage implements IStorage {
   async setMeta(key: string, value: string): Promise<void> {
     await db.execute(sql`INSERT INTO meta (key, value) VALUES (${key}, ${value}) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`);
   }
+
+  // =================================================================
+  // Phase 6: composite feed query + feed presets CRUD
+  // =================================================================
+
+  /**
+   * Composite-feed query. Drives saved presets, the public /api/stories
+   * endpoint when multi-desks are passed, and the admin inbox preset bar.
+   *
+   * Behavior:
+   *   - desks empty / undefined  -> no desk filter ("All")
+   *   - desks length === 1       -> single-desk fast path: WHERE desk = X
+   *                                 (ignores alt_desks; matches the user's
+   *                                  intent of "pure Sports feed")
+   *   - desks length >  1        -> composite path: WHERE desk IN (...) OR
+   *                                 alt_desks && desks. composite_confidence
+   *                                 weights primary 1.0, alt-hit 0.85, miss 0.
+   *   - sort='highest_confidence' -> ORDER BY composite_confidence DESC,
+   *                                   published_at DESC
+   *   - sort='oldest'             -> ORDER BY published_at ASC
+   *   - default                   -> ORDER BY published_at DESC
+   *
+   * Returns the same shape as listStories() so call sites can swap freely.
+   */
+  async listStoriesByPreset(
+    config: FeedPresetConfig,
+    opts: {
+      cityId?: number;
+      cursor?: number;
+      limit?: number;
+      // Lets the admin override the preset's stored query at runtime
+      // (e.g. type a search box on top of an active preset).
+      queryOverride?: string;
+    } = {},
+  ): Promise<{ items: Story[]; nextCursor: number | null; total: number }> {
+    const limit = opts.limit ?? 20;
+    const cursor = opts.cursor ?? 0;
+    const desks = [...(config.desks ?? [])].map((d) => d.toLowerCase()).sort();
+    const multi = desks.length > 1;
+    const single = desks.length === 1;
+
+    // --- WHERE clauses ---
+    const conditions: any[] = [];
+    if (config.modState !== "all") {
+      conditions.push(eq(stories.modState, config.modState));
+    }
+    if (opts.cityId) conditions.push(eq(stories.cityId, opts.cityId));
+    if (config.isReviewed !== undefined) {
+      conditions.push(eq(stories.isReviewed, config.isReviewed));
+    }
+    if (config.timeWindowHours && config.timeWindowHours > 0) {
+      const cutoff = new Date(Date.now() - config.timeWindowHours * 3600 * 1000).toISOString();
+      conditions.push(gte(stories.publishedAt, cutoff));
+    }
+    // Desk filter: empty = no filter, single = exact match, multi = OR with alt_desks overlap.
+    //
+    // Postgres array literal: we build `ARRAY[$1, $2, ...]::text[]` because
+    // Drizzle's sql template expands a JS array into a tuple `($1, $2)` which
+    // Postgres won't cast to text[]. sql.join with sql.param keeps the values
+    // parameterized (no SQL injection) while letting us wrap them in ARRAY[...].
+    const desksArraySql = sql`ARRAY[${sql.join(
+      desks.map((d) => sql`${d}`),
+      sql`, `,
+    )}]::text[]`;
+    if (single) {
+      conditions.push(eq(stories.desk, desks[0]));
+    } else if (multi) {
+      conditions.push(
+        or(
+          inArray(stories.desk, desks),
+          // alt_desks && ARRAY[...]::text[] -- row matches if any alt_desk is selected
+          sql`${stories.altDesks} && ${desksArraySql}`,
+        )!,
+      );
+    }
+    // Free-text search. queryOverride beats config.query so the admin can
+    // type on top of an active preset without overwriting it.
+    const queryText = (opts.queryOverride ?? config.query ?? "").trim().toLowerCase();
+    if (queryText) {
+      const needle = `%${queryText}%`;
+      conditions.push(
+        sql`(lower(${stories.headline}) LIKE ${needle} OR lower(${stories.summary}) LIKE ${needle} OR lower(${stories.tags}) LIKE ${needle} OR lower(coalesce(${stories.location}, '')) LIKE ${needle})`,
+      );
+    }
+    // Calendar-only sort variant: drop past events, sort by start time.
+    if (config.display.sortByEventDate) {
+      conditions.push(eq(stories.onCalendar, true));
+      const nowIso = new Date().toISOString();
+      conditions.push(
+        or(
+          and(isNull(stories.endsAt), gte(stories.startsAt, nowIso)),
+          gte(stories.endsAt, nowIso),
+        )!,
+      );
+    }
+    const whereClause = conditions.length ? and(...conditions) : undefined;
+
+    // --- Composite confidence expression ---
+    // For single-desk and "all" feeds we just use the raw stored confidence.
+    // For composite feeds we apply the 1.0 / 0.85 / 0 weighting at SELECT time.
+    const compositeConfidenceSql = multi
+      ? sql`
+          (${stories.confidence}::numeric *
+            CASE
+              WHEN ${stories.desk} = ANY(${desksArraySql}) THEN 1.0
+              WHEN ${stories.altDesks} && ${desksArraySql} THEN 0.85
+              ELSE 0
+            END)
+        `
+      : sql`${stories.confidence}::numeric`;
+
+    // --- Total (no limit) ---
+    const totalRes = await db
+      .select({ c: sql<number>`count(*)::int` })
+      .from(stories)
+      .where(whereClause as any);
+    const total = totalRes[0]?.c ?? 0;
+
+    // --- Paged select ---
+    const orderBy = (() => {
+      if (config.sort === "highest_confidence") {
+        return [desc(compositeConfidenceSql), desc(stories.publishedAt)];
+      }
+      if (config.sort === "oldest") return [asc(stories.publishedAt)];
+      if (config.display.sortByEventDate) {
+        return [asc(stories.startsAt), desc(stories.publishedAt)];
+      }
+      return [desc(stories.publishedAt)];
+    })();
+
+    const rows = await db
+      .select()
+      .from(stories)
+      .where(whereClause as any)
+      .orderBy(...(orderBy as any))
+      .limit(limit)
+      .offset(cursor);
+
+    const items = rows.map(rowToStory);
+    const nextCursor = cursor + items.length < total ? cursor + items.length : null;
+    return { items, nextCursor, total };
+  }
+
+  // ---- feed_presets CRUD ----
+
+  async createFeedPreset(input: InsertFeedPreset): Promise<FeedPreset> {
+    const rows = await db.insert(feedPresets).values(input as any).returning();
+    return rows[0] as FeedPreset;
+  }
+
+  async getFeedPreset(id: number): Promise<FeedPreset | undefined> {
+    const rows = await db.select().from(feedPresets).where(eq(feedPresets.id, id)).limit(1);
+    return rows[0] as FeedPreset | undefined;
+  }
+
+  /**
+   * List active presets visible to an admin. Returns:
+   *   - shared/org presets (every admin sees these)
+   *   - personal presets owned by `ownerId` when provided
+   * Optionally filtered to a specific city (pinned or portable).
+   */
+  async listFeedPresets(opts: {
+    ownerId?: string | null;
+    cityId?: number | null;
+    includeInactive?: boolean;
+  } = {}): Promise<FeedPreset[]> {
+    const conds: any[] = [];
+    if (!opts.includeInactive) conds.push(eq(feedPresets.isActive, true));
+    // Visibility: shared/org always; personal only for the owner.
+    if (opts.ownerId) {
+      conds.push(
+        or(
+          inArray(feedPresets.scope, ["shared", "org"]),
+          and(eq(feedPresets.scope, "personal"), eq(feedPresets.ownerId, opts.ownerId))!,
+        )!,
+      );
+    } else {
+      conds.push(inArray(feedPresets.scope, ["shared", "org"]));
+    }
+    // Optional city filter: pinned to this city OR portable (city_id NULL).
+    if (opts.cityId !== undefined && opts.cityId !== null) {
+      conds.push(or(isNull(feedPresets.cityId), eq(feedPresets.cityId, opts.cityId))!);
+    }
+    const rows = await db
+      .select()
+      .from(feedPresets)
+      .where(and(...conds) as any)
+      .orderBy(asc(feedPresets.sortOrder), asc(feedPresets.id));
+    return rows as FeedPreset[];
+  }
+
+  /** Patch an existing preset. Bumps configVersion when `config` changes. */
+  async updateFeedPreset(
+    id: number,
+    patch: Partial<Omit<InsertFeedPreset, "ownerId">>,
+  ): Promise<FeedPreset | undefined> {
+    const set: Record<string, any> = { ...patch, updatedAt: new Date().toISOString() };
+    if (patch.config !== undefined) {
+      const rows = await db
+        .update(feedPresets)
+        .set({ ...set, configVersion: sql`${feedPresets.configVersion} + 1` })
+        .where(eq(feedPresets.id, id))
+        .returning();
+      return rows[0] as FeedPreset | undefined;
+    }
+    const rows = await db.update(feedPresets).set(set).where(eq(feedPresets.id, id)).returning();
+    return rows[0] as FeedPreset | undefined;
+  }
+
+  /** Soft-delete: flip is_active=false. Keeps usage events linked. */
+  async softDeleteFeedPreset(id: number): Promise<boolean> {
+    const rows = await db
+      .update(feedPresets)
+      .set({ isActive: false, updatedAt: new Date().toISOString() })
+      .where(eq(feedPresets.id, id))
+      .returning({ id: feedPresets.id });
+    return rows.length > 0;
+  }
+
+  /** Reorder presets in bulk. Caller passes [id, sortOrder] pairs. */
+  async reorderFeedPresets(items: Array<{ id: number; sortOrder: number }>): Promise<void> {
+    if (items.length === 0) return;
+    for (const it of items) {
+      await db
+        .update(feedPresets)
+        .set({ sortOrder: it.sortOrder, updatedAt: new Date().toISOString() })
+        .where(eq(feedPresets.id, it.id));
+    }
+  }
+
+  // ---- feed_preset_events: append-only telemetry ----
+
+  async recordFeedPresetEvent(input: {
+    presetId?: number | null;
+    cityId?: number | null;
+    adminId?: string | null;
+    action: FeedPresetAction;
+    config: FeedPresetConfig | null;
+    payload?: Record<string, unknown> | null;
+  }): Promise<FeedPresetEvent> {
+    const filterSignature = buildFilterSignature({
+      cityId: input.cityId ?? null,
+      desks: input.config?.desks ?? [],
+      modState: input.config?.modState ?? null,
+      isReviewed: input.config?.isReviewed ?? null,
+      timeWindowHours: input.config?.timeWindowHours ?? null,
+      sort: input.config?.sort ?? null,
+    });
+    const rows = await db
+      .insert(feedPresetEvents)
+      .values({
+        presetId: input.presetId ?? null,
+        cityId: input.cityId ?? null,
+        adminId: input.adminId ?? null,
+        action: input.action,
+        filterSignature,
+        payload: input.payload ?? null,
+      } as any)
+      .returning();
+    return rows[0] as FeedPresetEvent;
+  }
+
+  /**
+   * Top filter signatures by usage in the last N days. Feeds the
+   * "suggested presets" UI -- the most-applied filter combos that aren't
+   * already saved as a preset by this admin.
+   */
+  async topFilterSignatures(opts: {
+    sinceDays?: number;
+    cityId?: number | null;
+    limit?: number;
+  } = {}): Promise<Array<{ filterSignature: string; uses: number }>> {
+    const since = new Date(Date.now() - (opts.sinceDays ?? 30) * 24 * 3600 * 1000).toISOString();
+    const limit = opts.limit ?? 10;
+    const cityClause = opts.cityId
+      ? sql`AND city_id = ${opts.cityId}`
+      : sql``;
+    const rows = await db.execute(sql`
+      SELECT filter_signature, COUNT(*)::int AS uses
+      FROM feed_preset_events
+      WHERE action = 'apply'
+        AND at >= ${since}
+        ${cityClause}
+      GROUP BY filter_signature
+      ORDER BY uses DESC
+      LIMIT ${limit}
+    `);
+    return (rows as unknown as Array<{ filter_signature: string; uses: number }>).map((r) => ({
+      filterSignature: r.filter_signature,
+      uses: r.uses,
+    }));
+  }
+
 }
 
 export const storage = new DatabaseStorage();

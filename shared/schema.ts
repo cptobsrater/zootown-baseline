@@ -1,4 +1,8 @@
-import { pgTable, text, integer, serial, boolean, doublePrecision } from "drizzle-orm/pg-core";
+import {
+  pgTable, text, integer, serial, bigserial, boolean, doublePrecision,
+  numeric, jsonb, timestamp, uniqueIndex, index,
+} from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -80,6 +84,12 @@ export const stories = pgTable("stories", {
   reviewedAt: text("reviewed_at"),
   // Multi-city: which city this story belongs to. 1 = Missoula (legacy default).
   cityId: integer("city_id").references(() => cities.id),
+  // Classifier signals for composite feeds. Confidence is 0..1.
+  // Existing rows are backfilled to 1.0 in migration 0001.
+  confidence: numeric("confidence", { precision: 3, scale: 2 }).notNull().default("1.0"),
+  // Secondary desks. Used by composite (multi-desk) feeds via the
+  // `alt_desks && ARRAY[...]` overlap query. Default = empty array.
+  altDesks: text("alt_desks").array().notNull().default(sql`ARRAY[]::text[]`),
 });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export type InsertStory = z.infer<typeof insertStorySchema>;
@@ -239,3 +249,143 @@ export const meta = pgTable("meta", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),
 });
+
+// =====================================================================
+// Feed presets (Phase 6) — saved composite-filter recipes for the admin
+// editorial cockpit. Lets an admin save a Sports+Entertainment+Crime
+// filter combination + city + search query + mod-state + time window as
+// a reusable named recipe and pin it as a chip.
+// =====================================================================
+
+export const FEED_PRESET_SCOPES = ["personal", "shared", "org"] as const;
+export type FeedPresetScope = (typeof FEED_PRESET_SCOPES)[number];
+
+export const FEED_PRESET_SORTS = ["newest", "oldest", "highest_confidence"] as const;
+export type FeedPresetSort = (typeof FEED_PRESET_SORTS)[number];
+
+/**
+ * The JSON config payload stored inside feed_presets.config.
+ *
+ * Validated by Zod on every write. Stored as JSONB so we can evolve the
+ * shape without DDL — add a new optional field and old presets still load.
+ */
+export const feedPresetConfigSchema = z.object({
+  // Empty array == "All". Order is irrelevant; server normalizes sorted.
+  desks: z.array(z.enum(DESKS)).default([]),
+  // Optional: pin to a specific city. Null/undefined = "follow current".
+  citySlug: z.enum(CITY_SLUGS).optional(),
+  // Mod state visibility. Public feed presets stay 'approved'; admin
+  // review queues can flip this to 'draft' or 'all'.
+  modState: z.enum(["all", "approved", "draft", "rejected"]).default("approved"),
+  // Admin-review filter.
+  isReviewed: z.boolean().optional(),
+  // Stored search query. Most presets leave this empty.
+  query: z.string().max(200).optional(),
+  // Optional rolling time window in hours. Null = "all time".
+  timeWindowHours: z.number().int().min(1).max(24 * 30).optional(),
+  // Sort override. Default is newest-first.
+  sort: z.enum(FEED_PRESET_SORTS).default("newest"),
+  // Composite display options.
+  display: z
+    .object({
+      showDeskStripes: z.boolean().default(true),
+      sortByEventDate: z.boolean().default(false),
+    })
+    .default({ showDeskStripes: true, sortByEventDate: false }),
+  // Structured signals for the suggestion engine + future ML defaulting.
+  signals: z
+    .object({
+      origin: z.enum(["manual", "suggested", "imported"]).default("manual"),
+    })
+    .default({ origin: "manual" }),
+});
+export type FeedPresetConfig = z.infer<typeof feedPresetConfigSchema>;
+
+export const feedPresets = pgTable(
+  "feed_presets",
+  {
+    id: serial("id").primaryKey(),
+    // Admin user id. Treated as opaque string — ties to admin_tokens.
+    // Required when scope='personal'; nullable for shared/org presets.
+    ownerId: text("owner_id"),
+    scope: text("scope").$type<FeedPresetScope>().notNull().default("personal"),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    config: jsonb("config").$type<FeedPresetConfig>().notNull(),
+    cityId: integer("city_id").references(() => cities.id),
+    sortOrder: integer("sort_order").notNull().default(0),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+    configVersion: integer("config_version").notNull().default(1),
+  },
+  (t) => ({
+    scopeActiveIdx: index("feed_presets_scope_active_idx").on(t.scope, t.isActive),
+    cityIdx: index("feed_presets_city_idx").on(t.cityId),
+  }),
+);
+
+export const insertFeedPresetSchema = createInsertSchema(feedPresets, {
+  config: feedPresetConfigSchema,
+}).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertFeedPreset = z.infer<typeof insertFeedPresetSchema>;
+export type FeedPreset = typeof feedPresets.$inferSelect;
+
+export const FEED_PRESET_ACTIONS = [
+  "apply", "save", "update", "delete", "suggest_seen", "suggest_apply",
+] as const;
+export type FeedPresetAction = (typeof FEED_PRESET_ACTIONS)[number];
+
+export const feedPresetEvents = pgTable(
+  "feed_preset_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    presetId: integer("preset_id").references(() => feedPresets.id),
+    // Deterministic hash of the filter combination (cityId, sorted desks,
+    // modState, isReviewed, timeWindowHours, sort). Same filter combos
+    // roll up across admins for the suggestion engine.
+    filterSignature: text("filter_signature").notNull(),
+    adminId: text("admin_id"),
+    cityId: integer("city_id").references(() => cities.id),
+    action: text("action").$type<FeedPresetAction>().notNull(),
+    payload: jsonb("payload"),
+    at: timestamp("at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    presetAtIdx: index("fpe_preset_at_idx").on(t.presetId, t.at),
+    signatureIdx: index("fpe_signature_idx").on(t.filterSignature, t.cityId, t.at),
+    adminAtIdx: index("fpe_admin_at_idx").on(t.adminId, t.at),
+  }),
+);
+
+export type FeedPresetEvent = typeof feedPresetEvents.$inferSelect;
+export const insertFeedPresetEventSchema = createInsertSchema(feedPresetEvents).omit({
+  id: true,
+  at: true,
+});
+export type InsertFeedPresetEvent = z.infer<typeof insertFeedPresetEventSchema>;
+
+/**
+ * Deterministic filter signature for the suggestion engine.
+ * Equivalent filter combos always hash to the same string — enables
+ * cross-admin rollups ("this combo has been opened 47 times this week").
+ */
+export function buildFilterSignature(input: {
+  cityId?: number | null;
+  desks?: string[];
+  modState?: string | null;
+  isReviewed?: boolean | null;
+  timeWindowHours?: number | null;
+  sort?: string | null;
+}): string {
+  const desks = [...(input.desks ?? [])].map((d) => d.toLowerCase()).sort();
+  const parts = [
+    `c=${input.cityId ?? "any"}`,
+    `d=${desks.join("+") || "all"}`,
+    `m=${input.modState ?? "approved"}`,
+    `r=${input.isReviewed == null ? "any" : input.isReviewed ? "yes" : "no"}`,
+    `w=${input.timeWindowHours ?? "all"}`,
+    `s=${input.sort ?? "newest"}`,
+  ];
+  return parts.join(";");
+}
