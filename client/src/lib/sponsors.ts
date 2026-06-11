@@ -44,7 +44,21 @@ export interface Sponsor {
   cities: CitySlug[];
 }
 
+// Order matters: sponsors are rotated round-robin starting at index 0,
+// so the FIRST sponsor eligible for a given city is the one that appears
+// under the second post (the first banner slot). Smoke City is intentionally
+// placed first so it leads the Missoula rotation as the newest sponsor.
 export const SPONSORS: Sponsor[] = [
+  {
+    id: "smoke-city-missoula",
+    name: "Smoke City Glass & Vape",
+    logo: "/sponsors/smokecity.png",
+    logoAlt: "Smoke City Glass & Vape logo",
+    address: "2400 Brooks St · Missoula, MT 59801",
+    phone: "(406) 304-3030",
+    href: "https://smokecityglassandvape.co",
+    cities: ["missoula"],
+  },
   {
     id: "wheat-missoula",
     name: "The Wheat Bakery & Deli — Missoula",
