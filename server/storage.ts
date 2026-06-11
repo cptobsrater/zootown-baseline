@@ -96,7 +96,26 @@ function rowToStory(r: any): Story {
     modState: r.mod_state ?? r.modState,
     politicalScope: r.political_scope ?? r.politicalScope ?? null,
     eventDate: r.event_date ?? r.eventDate ?? null,
-    onCalendar: r.on_calendar === true || r.on_calendar === 1 || r.onCalendar === true,
+    onCalendar: (() => {
+      // Defensive guard: a row is only "on the calendar" if we have solid
+      // confidence in its start time. A real event needs a starts_at value
+      // that is *distinct* from published_at -- if they collide within ~60s
+      // it's almost certainly a seeder slamming now() into both columns, not
+      // a real event time. Drop the calendar flag on the way out rather than
+      // leak a fabricated time to the UI. Better to show the row as plain
+      // news than to mislead readers about when something starts.
+      const flagged =
+        r.on_calendar === true || r.on_calendar === 1 || r.onCalendar === true;
+      if (!flagged) return false;
+      const startsRaw = r.starts_at ?? r.startsAt ?? null;
+      if (!startsRaw) return false;
+      const startsMs = Date.parse(startsRaw);
+      const publishedMs = Date.parse(r.published_at ?? r.publishedAt ?? "");
+      if (Number.isFinite(startsMs) && Number.isFinite(publishedMs)) {
+        if (Math.abs(startsMs - publishedMs) < 60_000) return false;
+      }
+      return true;
+    })(),
     venue: r.venue ?? null,
     startsAt: r.starts_at ?? r.startsAt ?? null,
     endsAt: r.ends_at ?? r.endsAt ?? null,
