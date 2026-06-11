@@ -7,6 +7,11 @@
     { "source": "/api/og-image", "destination": "/api/og-image" },
     { "source": "/api/story-preview", "destination": "/api/story-preview" },
     { "source": "/:city/story/:storyId", "destination": "/api/story-preview" },
+    {
+      "source": "/:city",
+      "has": [{ "type": "query", "key": "from_story" }],
+      "destination": "/api/story-preview"
+    },
     { "source": "/api/(.*)", "destination": "/api/[...path]" },
     { "source": "/((?!api/|assets/|.*\\..*).*)", "destination": "/index.html" }
   ],

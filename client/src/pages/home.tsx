@@ -142,6 +142,21 @@ export default function Home() {
   const deepLinkCitySlug =
     matchStory && storyParams?.city ? storyParams.city.toLowerCase() : null;
 
+  // When a recipient arrives via a shared-link URL (?from_story=NNN), strip
+  // that query string from the address bar after the page loads. The OG
+  // preview was already rendered server-side by api/story-preview.ts; the
+  // SPA itself doesn't need the param. Doing this keeps the visible URL
+  // clean (zootownhub.com/missoula) so the next reload doesn't keep the
+  // tracking param around.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("from_story")) {
+      const cleanUrl = window.location.pathname + window.location.hash;
+      window.history.replaceState(null, "", cleanUrl);
+    }
+  }, []);
+
   // Fetch the deep-link story if we don't already have it loaded. Also
   // verify the URL's city slug matches the story's actual city -- if a
   // user tapped a /billings/story/X link while their PWA was on Missoula,

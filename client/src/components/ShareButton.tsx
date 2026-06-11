@@ -39,18 +39,20 @@ export function ShareButton({ story }: Props) {
   const [copied, setCopied] = useState(false);
 
   // The share URL must point to the story's OWN city, not the city the
-  // sharer is currently viewing. This matters for related-story drawers
-  // and the cross-city statewide news that gets surfaced everywhere -- if
-  // a Missoula visitor shares a Billings article, the link should still
-  // land in Billings, not in Missoula.
+  // sharer is currently viewing -- if a Missoula visitor shares a Billings
+  // article, the link should still land in Billings, not Missoula.
   const storyCity: City | undefined = story.cityId
     ? cities.find((c) => c.id === story.cityId)
     : undefined;
   const slug = (storyCity ?? currentCity).slug;
+  // Share URL lands the recipient at the CITY FEED ROOT, not the article
+  // deep link. We still pass ?from_story=<id> so the server-rendered OG
+  // preview can stay article-specific (rich title, description, dynamic
+  // image) -- the SPA ignores the param and renders the regular feed.
   const url =
     typeof window !== "undefined"
-      ? `${window.location.origin}/${slug}/story/${story.id}`
-      : `/${slug}/story/${story.id}`;
+      ? `${window.location.origin}/${slug}?from_story=${story.id}`
+      : `/${slug}?from_story=${story.id}`;
   const shareTitle = story.headline;
   const shareText = story.summary ? story.summary.slice(0, 200) : story.headline;
 

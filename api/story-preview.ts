@@ -70,12 +70,29 @@ function originFromReq(req: VercelRequest): string {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Vercel rewrites this function to /:city/story/:storyId. Extract the id
-  // from the actual request URL (req.url is "/:city/story/:id").
-  const path = (req.url || "").split("?")[0];
-  const m = path.match(/^\/([^/]+)\/story\/(\d+)/);
-  const storyId = m ? Number(m[2]) : NaN;
-  const citySlug = m ? m[1] : "";
+  // This function handles two URL shapes:
+  //   1. /:city/story/:storyId  -- legacy deep link, drawer auto-opens
+  //   2. /:city?from_story=:id  -- preferred share URL: human lands on the
+  //      city feed root, crawler still gets per-story OG tags.
+  //
+  // The query-string form keeps the recipient's experience simple (city
+  // feed, no auto-open drawer) while preserving the rich link-unfurl
+  // preview in iMessage/Slack/Twitter.
+  const rawUrl = req.url || "";
+  const path = rawUrl.split("?")[0];
+  const queryStr = rawUrl.split("?")[1] ?? "";
+  const queryParams = new URLSearchParams(queryStr);
+  const deepLinkMatch = path.match(/^\/([^/]+)\/story\/(\d+)/);
+  const cityOnlyMatch = path.match(/^\/([^/]+)\/?$/);
+  let storyId = NaN;
+  let citySlug = "";
+  if (deepLinkMatch) {
+    citySlug = deepLinkMatch[1];
+    storyId = Number(deepLinkMatch[2]);
+  } else if (cityOnlyMatch && queryParams.has("from_story")) {
+    citySlug = cityOnlyMatch[1];
+    storyId = Number(queryParams.get("from_story"));
+  }
 
   let headline = "ZooTown";
   let summary = "Local Montana news, events, and stories.";
