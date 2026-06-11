@@ -449,6 +449,15 @@ export class DatabaseStorage implements IStorage {
     }
     if (q.cityId) conditions.push(eq(stories.cityId, q.cityId));
     if (q.isReviewed !== undefined) conditions.push(eq(stories.isReviewed, q.isReviewed));
+    // Defensive guard: never return future-dated rows on the public feed.
+    // Some seeders + bad ingest data have stamped published_at with
+    // now()+offset, which then permanently dominates the chronological
+    // top of the feed (e.g. "Lady Griz vs. Idaho State" pinned for weeks).
+    // For the admin Inbox we keep modState='all' rows visible so the admin
+    // can find and fix them; everywhere else we hide future timestamps.
+    if (modState === "approved") {
+      conditions.push(sql`${stories.publishedAt}::timestamptz <= now() + interval '5 minutes'`);
+    }
     if (needle) {
       conditions.push(sql`(lower(${stories.headline}) LIKE ${needle} OR lower(${stories.summary}) LIKE ${needle} OR lower(${stories.tags}) LIKE ${needle} OR lower(coalesce(${stories.location}, '')) LIKE ${needle})`);
     }

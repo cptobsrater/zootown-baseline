@@ -469,11 +469,72 @@ export function shouldSkipItem(item: RawItem, source: Source): string | null {
   if (isStale(item, 14)) return "stale";
   const summary = (item.summary ?? "").trim();
   if (!summary && item.title.length < 24) return "low_quality";
+  // English-only ingest: this is a Montana-local news app, so anything
+  // clearly written in another language is noise -- it sneaks in via
+  // Eventbrite's location-based search returning international virtual
+  // events. See isLikelyNonEnglish() for the heuristic.
+  if (isLikelyNonEnglish(item.title, item.summary)) return "non_english";
   // Cross-city pollution: regional TV stations republish other cities' news.
   // If the headline names another city explicitly, drop it from this source.
   const wrongCity = headlineBelongsToDifferentCity(item.title, (source as any).cityId ?? null);
   if (wrongCity !== null) return "wrong_city";
   return null;
+}
+
+/**
+ * Heuristic English-only language gate.
+ *
+ * Two signals, either one triggers the skip:
+ *
+ * 1. **High proportion of Latin-extended characters** -- normal English
+ *    news rarely has more than ~3% characters outside basic ASCII (a few
+ *    smart quotes, em-dashes, the occasional accented name). French,
+ *    Spanish, Portuguese, German, Catalan headlines cross that threshold
+ *    by a wide margin (éèêñüçãõé, etc.).
+ *
+ * 2. **Known non-English stop-word match** -- short word list that doesn't
+ *    appear in normal English headlines. Catches things like "webinaire",
+ *    "gratuit", "sessió", "capacitación", "masterclass" (Spanish loanword,
+ *    "masterclass" by itself is too ambiguous; we use stronger markers).
+ *
+ * Intentionally permissive: a Bozeman story about "Belgium winger Jérémy
+ * Doku" has ONE accented name and is rightly kept. The threshold catches
+ * dozen-accent headlines, not single proper nouns.
+ */
+export function isLikelyNonEnglish(title: string, summary?: string | null): boolean {
+  const text = `${title} ${summary ?? ""}`.trim();
+  if (text.length < 20) return false;
+
+  // Signal 1: Latin-extended character density.
+  // Match characters outside [a-z A-Z 0-9 standard punctuation + smart
+  // quotes/dashes that English writers genuinely use].
+  const extendedChars = text.match(/[\u00C0-\u017F\u0180-\u024F]/g);
+  if (extendedChars) {
+    const density = extendedChars.length / text.length;
+    // >2% accented characters is too many for legitimate English news.
+    // A headline like "Jérémy Doku" (~50 chars) has 2/50 = 4% -- borderline.
+    // We bias toward keeping content: require >3% AND >=3 occurrences.
+    if (density > 0.03 && extendedChars.length >= 3) return true;
+  }
+
+  // Signal 2: high-confidence non-English keywords.
+  const lower = text.toLowerCase();
+  const NON_ENGLISH_MARKERS = [
+    // French
+    "gratuit", "webinaire", "séance", "découvrir", "découverte",
+    "médiation", "colloque", "atelier", "conférence", "formation continue",
+    "étranger", "démarche", "professionnels formés",
+    // Spanish / Catalan
+    "capacitación", "certificación", "encuentro", "sesión", "sessió",
+    "comunitarios", "diálogo",
+    // Portuguese
+    "vivências", "vínculos", "família", "criatividade", "gestão",
+  ];
+  for (const marker of NON_ENGLISH_MARKERS) {
+    if (lower.includes(marker)) return true;
+  }
+
+  return false;
 }
 
 function truncateSummary(s: string, max = 260): string {
