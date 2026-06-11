@@ -129,10 +129,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   ].join("\n    ");
 
   const shell = loadShell();
-  // Inject the meta tags just before </head>. Strip the existing <title> tag
-  // since we are providing our own.
+  // Strip the default <title> and the default og:/twitter:/canonical tags
+  // baked into index.html so our per-story versions are the only ones the
+  // crawler sees. Twitter/X in particular reads the FIRST occurrence of
+  // each og/twitter property, not the last, so this is required for X
+  // shares to show the right preview (Facebook/iMessage/Slack happen to
+  // tolerate either order but we want consistency).
   const html = shell
     .replace(/<title>[^<]*<\/title>/i, "")
+    .replace(/<meta\s+property="og:[^"]+"\s+content="[^"]*"\s*\/?>\s*/gi, "")
+    .replace(/<meta\s+name="twitter:[^"]+"\s+content="[^"]*"\s*\/?>\s*/gi, "")
+    .replace(/<link\s+rel="canonical"\s+href="[^"]*"\s*\/?>\s*/gi, "")
     .replace(/<\/head>/i, `    ${ogTags}\n  </head>`);
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
