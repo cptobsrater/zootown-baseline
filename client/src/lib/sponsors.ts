@@ -46,8 +46,16 @@ export interface Sponsor {
 
 // Order matters: sponsors are rotated round-robin starting at index 0,
 // so the FIRST sponsor eligible for a given city is the one that appears
-// under the second post (the first banner slot). Smoke City is intentionally
-// placed first so it leads the Missoula rotation as the newest sponsor.
+// under the second post (the first banner slot).
+//
+// Current Missoula rotation (4 sponsors, cycle of 4):
+//   slot 0  (post #2)   Smoke City
+//   slot 1  (post #5)   Wheat Missoula
+//   slot 2  (post #8)   LOST Esthetics
+//   slot 3  (post #11)  Doc's
+//   slot 4  (post #14)  Smoke City again
+//
+// Great Falls rotation (2 sponsors): Wheat GF, Doc's, alternating.
 export const SPONSORS: Sponsor[] = [
   {
     id: "smoke-city-missoula",
@@ -71,6 +79,17 @@ export const SPONSORS: Sponsor[] = [
     address: "2520 S 3rd St W · Missoula, MT",
     phone: "(406) 327-0900",
     href: "https://wheatmissoula.com",
+    cities: ["missoula"],
+  },
+  {
+    id: "lost-esthetics",
+    name: "LOST Esthetics — Lash & Brow Studio",
+    logo: "/sponsors/lost.png",
+    logoAlt: "LOST Esthetics wordmark",
+    address: "110 E Broadway, Floor 6 · Missoula, MT 59802",
+    phone: "(406) 925-0549",
+    tagline: "Book online · Lash lifts, extensions, brows",
+    href: "https://lostesthetics.glossgenius.com/",
     cities: ["missoula"],
   },
   {
