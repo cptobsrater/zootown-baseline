@@ -13,20 +13,32 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { fileURLToPath } from "url";
+
+// ESM-safe __dirname.
+const __dirname = (() => {
+  try {
+    return fileURLToPath(new URL(".", import.meta.url));
+  } catch {
+    return process.cwd();
+  }
+})();
 
 // The compiled SPA shell lives next to this function once Vercel builds it.
 // We read it once and rewrite the <head> per request.
 let cachedShell: string | null = null;
 function loadShell(): string {
   if (cachedShell) return cachedShell;
-  // Vercel's filesystem layout: api/* runs alongside the static output at
-  // /public (or /dist/public on build). We try a couple of plausible paths.
-  for (const p of [
-    resolve(process.cwd(), "dist/public/index.html"),
+  // On Vercel the lambda runs from /var/task and static output lives at
+  // /var/task/public/index.html. We try several plausible paths.
+  const candidates = [
     resolve(process.cwd(), "public/index.html"),
-    resolve(__dirname, "../dist/public/index.html"),
+    resolve(process.cwd(), "dist/public/index.html"),
     resolve(__dirname, "../public/index.html"),
-  ]) {
+    resolve(__dirname, "../dist/public/index.html"),
+    "/var/task/public/index.html",
+  ];
+  for (const p of candidates) {
     try {
       cachedShell = readFileSync(p, "utf-8");
       return cachedShell;
@@ -34,9 +46,10 @@ function loadShell(): string {
       /* try next */
     }
   }
-  // Fallback: a minimal HTML that still works for crawlers and lets the
-  // SPA loader bootstrap normally on the client.
-  cachedShell = `<!doctype html><html><head><meta charset="utf-8"><title>ZooTown</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>`;
+  // Fallback: a minimal HTML shell. The script src path doesn't matter for
+  // crawlers (they read meta tags) and humans will get the real bundle from
+  // the bot-detection fallthrough if this branch is ever hit.
+  cachedShell = `<!doctype html><html><head><meta charset="utf-8"><title>ZooTown</title></head><body><div id="root"></div></body></html>`;
   return cachedShell;
 }
 
@@ -66,18 +79,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   let headline = "ZooTown";
   let summary = "Local Montana news, events, and stories.";
-  let canonical = `${originFromReq(req)}${path}`;
+  const canonical = `${originFromReq(req)}${path}`;
   if (Number.isFinite(storyId)) {
     try {
-      const apiRes = await fetch(`${originFromReq(req)}/api/stories/${storyId}`);
-      if (apiRes.ok) {
-        const story = (await apiRes.json()) as { headline?: string; summary?: string };
-        if (story.headline) headline = story.headline;
-        if (story.summary) summary = story.summary;
-      }
-    } catch {
-      // Network failure -- fall through with default tags. The client SPA
-      // will still resolve the story once it loads.
+      // Hit storage directly instead of recursing through HTTP -- avoids
+      // a self-fetch round-trip and the associated cold-start latency.
+      const { storage } = await import("../server/storage.js");
+      const story = await storage.getStory(storyId);
+      if (story?.headline) headline = story.headline;
+      if (story?.summary) summary = story.summary;
+    } catch (err) {
+      // DB failure -- fall through with default tags. The client SPA will
+      // still resolve the story once it loads.
+      console.error("[story-preview] failed to load story", storyId, err);
     }
   }
 
