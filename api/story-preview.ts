@@ -87,7 +87,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { storage } = await import("../server/storage.js");
       const story = await storage.getStory(storyId);
       if (story?.headline) headline = story.headline;
-      if (story?.summary) summary = story.summary;
+      if (story?.summary) {
+        // Strip the leading machine-generated event summary prefix that
+        // looks like 'YYYY-MM-DDTHH:MM:SS.000Z · ' (Logjam parser emits
+        // this for calendar event rows). Falls back to the raw summary
+        // for normal news rows where this regex doesn't match.
+        summary = story.summary
+          .replace(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\s*·\s*/, "")
+          .trim();
+        // If after stripping we are left with nothing meaningful, fall back
+        // to the headline so the share preview is never empty.
+        if (summary.length < 8) summary = headline;
+      }
     } catch (err) {
       // DB failure -- fall through with default tags. The client SPA will
       // still resolve the story once it loads.
