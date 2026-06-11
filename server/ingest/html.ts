@@ -11,7 +11,12 @@ import { loadFixture } from "./fixtures.js";
  * reliable without baking in a dozen fragile parsers.
  */
 
-const PARSERS: Record<string, (html: string, source: Source) => RawItem[]> = {
+// Parsers may be sync OR async. Async parsers can issue secondary HTTP
+// requests (e.g. follow listing pages to event detail pages for show times).
+// The dispatcher awaits the result either way.
+type ParserFn = (html: string, source: Source) => RawItem[] | Promise<RawItem[]>;
+
+const PARSERS: Record<string, ParserFn> = {
   "destination-missoula": genericArticleParser,
   "downtown-partnership": genericArticleParser,
   "fairgrounds": genericArticleParser,
@@ -19,7 +24,11 @@ const PARSERS: Record<string, (html: string, source: Source) => RawItem[]> = {
   "library": genericArticleParser,
   "zacc": genericArticleParser,
   "missoula-events": missoulaEventsParser,
-  "logjam": logjamParser,
+  // Two-stage parser: listing page -> per-event detail fetch for show time.
+  // Handles all four Logjam-managed venues (Logjam main, KettleHouse, Wilma,
+  // ELM Bozeman, Top Hat) because they share the same /event/<slug> URL space.
+  // Per-source venue filtering is applied inside the parser using source.name.
+  "logjam": logjamDetailParser,
   // "json-ld" is the generic event extractor for venue pages that embed
   // schema.org Event records in <script type="application/ld+json"> blocks.
   // Used as the default for category=calendars when no parserKey is set.
@@ -99,48 +108,208 @@ function jsonLdEventParser(html: string, source: Source): RawItem[] {
   return items;
 }
 
-/** Logjam Presents — Missoula concert promoter. Events live at /event/<slug> */
-function logjamParser(html: string, source: Source): RawItem[] {
-  const items: RawItem[] = [];
-  const seen = new Set<string>();
-  // Match anchors to /event/<slug>. Capture surrounding HTML for date/venue extraction.
-  const re = /<a[^>]+href="(https?:\/\/(?:www\.)?logjampresents\.com\/event\/[^"#?]+|\/event\/[^"#?]+)"[^>]*>([\s\S]{1,400}?)<\/a>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null && items.length < 30) {
-    const href = m[1].trim();
-    const inner = m[2];
-    const title = stripHtml(inner);
-    if (!title || title.length < 4 || title.length > 220) continue;
-    if (looksNav(title, href)) continue;
-    let fullUrl: string;
-    try {
-      const base = new URL(source.url);
-      fullUrl = href.startsWith("http") ? href : `${base.origin}${href}`;
-    } catch {
-      continue;
+// ----- Logjam two-stage parser -----------------------------------------
+//
+// Logjam Presents manages four venues that all share the same
+// logjampresents.com/event/<slug>/ URL space:
+//
+//   - KettleHouse Amphitheater (Missoula, outdoor concert venue)
+//   - The Wilma                (Missoula, downtown theater)
+//   - Top Hat                  (Missoula, club)
+//   - The ELM                  (Bozeman, theater)
+//
+// Stage 1: fetch the listing page (/events/) and extract every unique
+//          /event/<slug> URL.
+// Stage 2: for each event URL, fetch the detail page and pull title,
+//          venue, full date, and **show time** (start-of-event). The
+//          listing page only has dates, not times -- times live behind
+//          each detail page.
+//
+// Per-source filter: the same listing serves all four venues, so each
+// registered source (one per venue) keeps only the events whose detail
+// page reports the matching venue. KettleHouse->Missoula, ELM->Bozeman,
+// etc. -- mapped via source.name.
+//
+// Throttle: max 25 detail fetches per run, 150ms inter-request gap,
+// concurrency = 4.
+
+const LOGJAM_DOOR_TIME_RE =
+  /class="door-time"[^>]*>\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))/i;
+const LOGJAM_SHOW_TIME_RE =
+  /class="show-time"[^>]*>\s*(\d{1,2}:\d{2}\s*(?:AM|PM|am|pm))/i;
+const LOGJAM_VENUE_TITLE_RE =
+  /class="venue-title"[^>]*>\s*([^<]+?)\s*</i;
+const LOGJAM_OG_DESC_RE =
+  /<meta\s+property="og:description"\s+content="([^"]+)"/i;
+const LOGJAM_PROSE_DATE_RE =
+  /(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day,\s+([A-Z][a-z]+)\s+(\d{1,2}),\s+(\d{4})/;
+const LOGJAM_TITLE_RE = /<title>([^<]+?)\s*-\s*Logjam Presents<\/title>/i;
+
+const MONTHS_LONG: Record<string, number> = {
+  january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+};
+
+/**
+ * Given a Montana local date, return the UTC offset hours.
+ * MDT (UTC-6) when DST is in effect (2nd Sun of March -> 1st Sun of Nov),
+ * MST (UTC-7) otherwise.
+ */
+function mountainOffsetHours(year: number, month0: number, day: number): number {
+  // Second Sunday of March
+  const march1 = new Date(Date.UTC(year, 2, 1));
+  const daysToFirstSun = (7 - march1.getUTCDay()) % 7;
+  const dstStart = new Date(Date.UTC(year, 2, 1 + daysToFirstSun + 7));
+  // First Sunday of November
+  const nov1 = new Date(Date.UTC(year, 10, 1));
+  const daysToFirstSunNov = (7 - nov1.getUTCDay()) % 7;
+  const dstEnd = new Date(Date.UTC(year, 10, 1 + daysToFirstSunNov));
+  const probe = new Date(Date.UTC(year, month0, day));
+  return probe >= dstStart && probe < dstEnd ? -6 : -7;
+}
+
+/**
+ * Map a registered source (KettleHouse, Wilma, ELM, Top Hat, or the
+ * umbrella "Logjam Presents") to the venue substring we expect to see
+ * on the detail page. Returns null for the umbrella feed (accept all).
+ */
+function logjamVenueFilter(source: Source): RegExp | null {
+  const name = (source.name || "").toLowerCase();
+  if (name.includes("kettlehouse")) return /kettlehouse/i;
+  if (name.includes("wilma")) return /wilma/i;
+  if (name.includes("elm")) return /\bELM\b/;
+  if (name.includes("top hat")) return /top\s*hat/i;
+  // "Logjam Presents" without a venue qualifier = umbrella feed; accept all.
+  return null;
+}
+
+/**
+ * Extract structured event data from a Logjam detail page. Returns null
+ * when the page does not have a confident show time -- private rentals,
+ * "on sale soon" placeholders, etc.
+ */
+function extractLogjamDetail(
+  url: string,
+  html: string,
+): { title: string; venue: string | null; startsAtIso: string; doorTime: string | null; showTime: string | null } | null {
+  const titleM = html.match(LOGJAM_TITLE_RE);
+  const title = titleM ? titleM[1].trim() : null;
+  if (!title) return null;
+
+  const dateM = html.match(LOGJAM_PROSE_DATE_RE);
+  if (!dateM) return null;
+  const monthName = dateM[1].toLowerCase();
+  const month0 = MONTHS_LONG[monthName];
+  if (month0 === undefined) return null;
+  const day = Number(dateM[2]);
+  const year = Number(dateM[3]);
+  if (!Number.isFinite(day) || !Number.isFinite(year)) return null;
+
+  // Prefer show time (canonical start); fall back to door time.
+  const showM = html.match(LOGJAM_SHOW_TIME_RE);
+  const doorM = html.match(LOGJAM_DOOR_TIME_RE);
+  const chosen = showM?.[1] ?? doorM?.[1];
+  if (!chosen) return null;
+  const hm = chosen.match(/(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)/);
+  if (!hm) return null;
+  let hh = Number(hm[1]) % 12;
+  const mm = Number(hm[2]);
+  if (hm[3].toUpperCase() === "PM") hh += 12;
+
+  // Venue: structural class first, then og:description prose.
+  let venue: string | null = null;
+  const venueM = html.match(LOGJAM_VENUE_TITLE_RE);
+  if (venueM) venue = venueM[1].trim();
+  if (!venue) {
+    const ogM = html.match(LOGJAM_OG_DESC_RE);
+    const og = ogM ? ogM[1] : "";
+    for (const v of ["KettleHouse Amphitheater", "The Wilma", "The ELM", "Top Hat"]) {
+      if (og.toLowerCase().includes(v.toLowerCase())) {
+        venue = v;
+        break;
+      }
     }
-    if (seen.has(fullUrl)) continue;
-    seen.add(fullUrl);
-    // Look in a 600-char window after this anchor for a date string and venue.
-    const tailStart = m.index + m[0].length;
-    const tail = html.slice(tailStart, tailStart + 800);
-    const dateMatch = tail.match(
-      /(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^,<]{0,4},?\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:[,\s]+\d{4})?/i,
-    );
-    const venueMatch = tail.match(
-      /(Wilma|Top\s*Hat|ELM|KettleHouse|Kettlehouse\s+Amphitheater|Monk['’]s\s+Bar|Stage\s*112|Big\s*Sky\s*Brewing|Caras\s+Park)/i,
-    );
-    const summaryParts: string[] = [];
-    if (dateMatch) summaryParts.push(dateMatch[0].replace(/\s+/g, " ").trim());
-    if (venueMatch) summaryParts.push(venueMatch[0].replace(/\s+/g, " ").trim());
-    items.push({
-      title,
-      url: fullUrl,
-      categories: ["Event"],
-      summary: summaryParts.length ? summaryParts.join(" · ") : undefined,
-    });
   }
-  if (items.length === 0) return genericArticleParser(html, source);
+
+  // Construct UTC ISO timestamp. Local Montana time + sign-flipped offset.
+  // offset is -6 (MDT) or -7 (MST); UTC = local - offset = local + |offset|.
+  const offsetH = mountainOffsetHours(year, month0, day);
+  const localMs = Date.UTC(year, month0, day, hh, mm);
+  const utcMs = localMs - offsetH * 3600 * 1000;
+  const startsAtIso = new Date(utcMs).toISOString();
+
+  return {
+    title,
+    venue,
+    startsAtIso,
+    doorTime: doorM?.[1] ?? null,
+    showTime: showM?.[1] ?? null,
+  };
+}
+
+async function logjamDetailParser(html: string, source: Source): Promise<RawItem[]> {
+  // ---- Stage 1: extract event URLs from listing page ----
+  const urlSet = new Set<string>();
+  const urlRe =
+    /href=["'](https?:\/\/(?:www\.)?logjampresents\.com\/event\/[^"'#?]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = urlRe.exec(html)) !== null) {
+    urlSet.add(m[1].trim());
+  }
+  if (urlSet.size === 0) return [];
+
+  // Cap at 25 detail fetches per run to keep ingestion fast and polite.
+  const urls = Array.from(urlSet).slice(0, 25);
+
+  // ---- Stage 2: fetch each detail page (concurrency=4) ----
+  const venueFilter = logjamVenueFilter(source);
+  const items: RawItem[] = [];
+  const CONCURRENCY = 4;
+  let cursor = 0;
+
+  async function worker(): Promise<void> {
+    while (cursor < urls.length) {
+      const idx = cursor++;
+      const eventUrl = urls[idx];
+      try {
+        const res = await fetchWithTimeout(eventUrl, 6000);
+        if (!res.ok) continue;
+        const detailHtml = await res.text();
+        const parsed = extractLogjamDetail(eventUrl, detailHtml);
+        if (!parsed) continue;
+        // Per-source venue filter: skip events at other Logjam venues.
+        if (venueFilter && parsed.venue && !venueFilter.test(parsed.venue)) {
+          continue;
+        }
+        const summaryParts: string[] = [parsed.startsAtIso];
+        if (parsed.venue) summaryParts.push(parsed.venue);
+        if (parsed.showTime) summaryParts.push(`Show ${parsed.showTime}`);
+        if (parsed.doorTime) summaryParts.push(`Doors ${parsed.doorTime}`);
+        items.push({
+          title: parsed.title.slice(0, 220),
+          url: eventUrl,
+          categories: ["Event"],
+          summary: summaryParts.join(" \u00b7 "),
+          // ingester.ts reads publishedAt as the canonical event start time
+          // for calendar-category sources. The confidence guard in
+          // server/storage.ts (rowToStory) will accept this because it
+          // differs from the row's published_at by far more than 60s.
+          publishedAt: parsed.startsAtIso,
+        });
+      } catch {
+        // Network/timeout/parse error on one event -- skip, keep going.
+      }
+      // Polite gap to avoid hammering the venue site.
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
+  const inFlight: Promise<void>[] = [];
+  for (let i = 0; i < Math.min(CONCURRENCY, urls.length); i++) {
+    inFlight.push(worker());
+  }
+  await Promise.all(inFlight);
+
   return items;
 }
 
@@ -320,7 +489,9 @@ export const htmlFetcher: Fetcher = {
       const res = await fetchWithTimeout(fetchUrl, timeoutMs);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const html = await res.text();
-      const items = parser(html, source);
+      // Parsers may be sync OR async (e.g. two-stage parsers that follow
+      // listing pages to event detail pages). Awaiting works for both.
+      const items = await parser(html, source);
       if (items.length === 0) {
         return { mode: "mock", items: loadFixture(source), error: "parser produced 0 items" };
       }
