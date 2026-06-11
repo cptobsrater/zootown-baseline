@@ -18,6 +18,41 @@ interface StoriesPage {
   total: number;
 }
 
+/**
+ * Break up runs of same-desk cards so the feed never shows the same category
+ * twice in a row when a different-category card is available later.
+ *
+ * Greedy interleaver: walk the input in order (already sorted newest-first),
+ * always pick the earliest item whose desk ≠ the last placed desk. If every
+ * remaining item shares the previous desk, fall through and just append them
+ * in order — we never reorder past necessity, so the chronological feel is
+ * preserved and a long-tail of same-desk events at the end still renders.
+ *
+ * O(n^2) worst case but n is the page size (≤ ~50), so it's a non-issue.
+ */
+function interleaveByDesk<T extends { desk: string | null | undefined }>(
+  arr: readonly T[],
+): T[] {
+  if (arr.length < 2) return arr.slice();
+  const remaining = arr.slice();
+  const out: T[] = [];
+  let lastDesk: string | null = null;
+  while (remaining.length > 0) {
+    // First try to find the earliest item with a different desk than the
+    // previous card. If none exists (everything left is same-desk), just
+    // take the first remaining item.
+    let pickIdx = 0;
+    if (lastDesk !== null) {
+      const idx = remaining.findIndex((it) => (it.desk ?? "") !== lastDesk);
+      if (idx >= 0) pickIdx = idx;
+    }
+    const [picked] = remaining.splice(pickIdx, 1);
+    out.push(picked);
+    lastDesk = picked.desk ?? "";
+  }
+  return out;
+}
+
 interface HistoryStory {
   id: number;
   headline: string;
@@ -268,13 +303,22 @@ export default function Home() {
       });
   }, [items, isEventsDesk]);
 
-  const displayItems = isHistoryDesk
+  // Choose the right list per active filter, then apply the "no two
+  // same-category cards in a row" interleaver. We DO NOT interleave the
+  // calendar/events tab (those are chronological by start time and that
+  // ordering is more important than category variety), and we skip the
+  // single-desk people/history tabs (every card shares a desk by definition).
+  const baseItems = isHistoryDesk
     ? historyAsStories
     : isPeopleDesk
     ? peopleDisplay
     : isEventsDesk
     ? eventsItems
     : items;
+  const displayItems = useMemo(() => {
+    if (isHistoryDesk || isPeopleDesk || isEventsDesk) return baseItems;
+    return interleaveByDesk(baseItems);
+  }, [baseItems, isHistoryDesk, isPeopleDesk, isEventsDesk]);
   const isLoading = isHistoryDesk ? historyQuery.isLoading : feed.isLoading;
   const total = isHistoryDesk
     ? historyAsStories.length
