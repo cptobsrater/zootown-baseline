@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Story } from "@shared/schema";
 import { Share2, Link as LinkIcon, Mail, MessageSquare, Check } from "lucide-react";
 import { useCity } from "@/lib/city-context";
+import type { City } from "@/lib/city-context";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,14 +31,23 @@ interface Props {
  * lands in ZooTown's reader where they can also see the original source link.
  */
 export function ShareButton({ story }: Props) {
-  const { currentCity } = useCity();
+  const { currentCity, cities } = useCity();
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // The share URL must point to the story's OWN city, not the city the
+  // sharer is currently viewing. This matters for related-story drawers
+  // and the cross-city statewide news that gets surfaced everywhere -- if
+  // a Missoula visitor shares a Billings article, the link should still
+  // land in Billings, not in Missoula.
+  const storyCity: City | undefined = story.cityId
+    ? cities.find((c) => c.id === story.cityId)
+    : undefined;
+  const slug = (storyCity ?? currentCity).slug;
   const url =
     typeof window !== "undefined"
-      ? `${window.location.origin}/${currentCity.slug}/story/${story.id}`
-      : `/${currentCity.slug}/story/${story.id}`;
+      ? `${window.location.origin}/${slug}/story/${story.id}`
+      : `/${slug}/story/${story.id}`;
   const shareTitle = story.headline;
   const shareText = story.summary ? story.summary.slice(0, 200) : story.headline;
 

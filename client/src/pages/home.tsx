@@ -91,7 +91,7 @@ function initialDeskSet(): Set<DeskId> {
 }
 
 export default function Home() {
-  const { currentCity } = useCity();
+  const { currentCity, cities } = useCity();
   const citySlug = currentCity.slug;
 
   // Multi-select set of desks. Empty set == "All" (no filter).
@@ -132,8 +132,14 @@ export default function Home() {
   const [matchStory, storyParams] = useRoute("/:city/story/:storyId");
   const deepLinkStoryId =
     matchStory && storyParams?.storyId ? Number(storyParams.storyId) : null;
+  const deepLinkCitySlug =
+    matchStory && storyParams?.city ? storyParams.city.toLowerCase() : null;
 
-  // Fetch the deep-link story if we don't already have it loaded.
+  // Fetch the deep-link story if we don't already have it loaded. Also
+  // verify the URL's city slug matches the story's actual city -- if a
+  // user tapped a /billings/story/X link while their PWA was on Missoula,
+  // we need to switch to Billings on arrival so the feed underneath
+  // matches the open drawer.
   useEffect(() => {
     if (deepLinkStoryId === null) return;
     if (selected && selected.id === deepLinkStoryId) return;
@@ -143,7 +149,8 @@ export default function Home() {
         const res = await fetch(`/api/stories/${deepLinkStoryId}`);
         if (!res.ok) return;
         const story = (await res.json()) as Story;
-        if (!cancelled) setSelected(story);
+        if (cancelled) return;
+        setSelected(story);
       } catch {
         /* network blip — user can still browse the feed */
       }
@@ -153,19 +160,41 @@ export default function Home() {
     };
   }, [deepLinkStoryId, selected]);
 
+  // If the deep-link URL says one city but the story belongs to another,
+  // navigate to the story's correct city. Two cases:
+  //   1. The shared URL has the wrong slug because the sharer was viewing
+  //      a related cross-city story from a different city's feed.
+  //   2. The PWA opened with a stale wouter location pointing at a
+  //      different city (Missoula default, etc.).
+  // The CityProvider reads citySlug from the URL, so navigating fixes
+  // the city header / weather / filter scope automatically.
+  useEffect(() => {
+    if (!selected) return;
+    if (!deepLinkCitySlug) return;
+    const cityRow = cities.find((c) => c.id === selected.cityId);
+    if (!cityRow) return;
+    const correctSlug = cityRow.slug.toLowerCase();
+    if (correctSlug !== deepLinkCitySlug) {
+      navigate(`/${correctSlug}/story/${selected.id}`, { replace: true });
+    }
+  }, [selected, deepLinkCitySlug, cities, navigate]);
+
   // Mirror selected -> URL: when a card is clicked, push the deep-link route
   // so the URL reflects what the user is viewing and the link is shareable
-  // straight from the address bar.
+  // straight from the address bar. Use the STORY'S own city slug, not the
+  // currently-viewed city, so cross-city shares are correct.
   useEffect(() => {
     if (selected) {
-      const target = `/${citySlug}/story/${selected.id}`;
+      const storyCity = cities.find((c) => c.id === selected.cityId);
+      const targetSlug = storyCity?.slug ?? citySlug;
+      const target = `/${targetSlug}/story/${selected.id}`;
       if (window.location.pathname !== target) {
         navigate(target, { replace: false });
       }
     } else if (matchStory) {
       navigate(`/${citySlug}`, { replace: false });
     }
-  }, [selected, matchStory, citySlug, navigate]);
+  }, [selected, matchStory, citySlug, navigate, cities]);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [newPostsCount, setNewPostsCount] = useState(0);
 
