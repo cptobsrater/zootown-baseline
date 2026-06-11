@@ -354,47 +354,48 @@ export default function Home() {
       <main className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-6 md:py-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px] xl:gap-8">
           <section aria-label="Live feed">
-            <div className="mb-4 flex items-end justify-between gap-4">
-              <div>
-                <h1 className="font-serif text-[1.65rem] leading-tight font-semibold tracking-tight text-foreground">
-                  {(() => {
-                    if (selectedDesks.size === 0) return `Live from ${currentCity.displayName}`;
-                    if (selectedDesks.size === 1) {
-                      const only = sortedDesks[0] as DeskId;
-                      return DESK_META[only]?.label ?? only;
-                    }
-                    // Multi-select: list desk labels joined with ' + '
-                    return sortedDesks
-                      .map((d) => DESK_META[d as DeskId]?.label ?? d)
-                      .join(" + ");
-                  })()}
-                </h1>
-                {isHistoryDesk && (
-                  <p className="mt-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                    Curated stories · rotated weekly · rooted in archival fact
-                  </p>
+            {/*
+              Section heading ("Business Desk · 4 posts") removed so the first
+              card lines up flush with the top of the Top Stories sidebar.
+              The active filter is already obvious from the underlined tab
+              in the top bar, and the card count is visible on screen. We
+              still surface the small functional bits:
+                - history/events descriptor lines (mode-specific behavior)
+                - search-active "clear" pill (only when a query is active)
+                - search-result count (only when a query is active)
+            */}
+            {(isHistoryDesk || isEventsDesk || debounced) && (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-col gap-1">
+                  {isHistoryDesk && (
+                    <p className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
+                      Curated stories · rotated weekly · rooted in archival fact
+                    </p>
+                  )}
+                  {isEventsDesk && (
+                    <p className="font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
+                      Upcoming events · sorted by date · past events hidden
+                    </p>
+                  )}
+                  {debounced && (
+                    <p className="text-xs text-muted-foreground">
+                      {isLoading && displayItems.length === 0
+                        ? "Searching…"
+                        : `${total} ${total === 1 ? "post" : "posts"} matching "${debounced}"`}
+                    </p>
+                  )}
+                </div>
+                {debounced && (
+                  <button
+                    onClick={() => setQuery("")}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate"
+                  >
+                    <X className="h-3 w-3" />
+                    Clear search
+                  </button>
                 )}
-                {isEventsDesk && (
-                  <p className="mt-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-muted-foreground">
-                    Upcoming events · sorted by date · past events hidden
-                  </p>
-                )}
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {isLoading && displayItems.length === 0
-                    ? "Loading feed…"
-                    : `${total} posts${debounced ? ` matching "${debounced}"` : ""}`}
-                </p>
               </div>
-              {debounced && (
-                <button
-                  onClick={() => setQuery("")}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate"
-                >
-                  <X className="h-3 w-3" />
-                  Clear search
-                </button>
-              )}
-            </div>
+            )}
 
             <div className="space-y-3">
               {displayItems.map((s) => (
