@@ -19,6 +19,9 @@ import { SourcesDialog } from "@/components/SourcesDialog";
 import { Weather } from "@/components/Weather";
 import { DESK_META, type DeskId, parseTags, relativeTime } from "@/lib/format";
 import { ArrowUp, X } from "lucide-react";
+import { Editable } from "@/components/Editable";
+import { StoryEditDialog } from "@/components/StoryEditDialog";
+import { useEditMode } from "@/lib/edit-mode";
 
 interface StoriesPage {
   items: Story[];
@@ -129,6 +132,11 @@ export default function Home() {
   const [cursor, setCursor] = useState(0);
   const [items, setItems] = useState<Story[]>([]);
   const [selected, setSelected] = useState<Story | null>(null);
+  // Editorial-mode target: when the admin clicks the pencil overlay on a
+  // card, we stash that story here and mount the StoryEditDialog over the
+  // live page. setEditingStory(null) closes the dialog.
+  const [editingStory, setEditingStory] = useState<Story | null>(null);
+  const { isEditing } = useEditMode();
 
   // ---- Story deep links ----
   // When the URL is /:city/story/:storyId, auto-open the drawer to that
@@ -496,7 +504,16 @@ export default function Home() {
             <div className="space-y-3">
               {displayItems.map((s, idx) => (
                 <Fragment key={s.id}>
-                  <StoryCard story={s} onOpen={setSelected} />
+                  {/* Editable wraps the card with a hover pencil when
+                      editorial mode is on (admin token + ?edit=1). In normal
+                      browsing it is a transparent passthrough -- no extra DOM
+                      or handlers. */}
+                  <Editable
+                    onEdit={() => setEditingStory(s)}
+                    label="Edit story"
+                  >
+                    <StoryCard story={s} onOpen={setSelected} />
+                  </Editable>
                   {/* Sponsor banner rule (lib/sponsors.ts): attach a banner to
                       the bottom of the 2nd post (idx=1), then every 3rd post
                       after that (4, 7, 10, ...). Rotates round-robin through
@@ -598,6 +615,22 @@ export default function Home() {
         onOpenRelated={(s) => setSelected(s)}
       />
       <SourcesDialog open={sourcesOpen} onOpenChange={setSourcesOpen} />
+
+      {/* Editorial mode: in-place story editor mounted over the live page.
+          Only rendered when editorial mode is on AND an admin clicked the
+          pencil on a card. onChange fires after a save/delete; we invalidate
+          the stories query so the feed refreshes without a full reload. */}
+      {isEditing && (
+        <StoryEditDialog
+          story={editingStory}
+          open={!!editingStory}
+          onClose={() => setEditingStory(null)}
+          onChange={() => {
+            queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/top-stories"] });
+          }}
+        />
+      )}
     </div>
   );
 }
