@@ -12,6 +12,8 @@ import AdminPage from "@/pages/admin";
 import CockpitPage from "@/pages/cockpit";
 import CalendarPage from "@/pages/calendar";
 import JobsPage from "@/pages/jobs";
+import FeedbackPage from "@/pages/feedback";
+import { FeedbackButton } from "@/components/FeedbackButton";
 
 function AppRouter() {
   return (
@@ -24,6 +26,9 @@ function AppRouter() {
       <Route path="/admin/cockpit" component={CockpitPage} />
       {/* Admin is not city-scoped at the URL level (admin uses an in-page city switcher) */}
       <Route path="/admin" component={AdminPage} />
+
+      {/* Public feedback page -- linked from the floating Feedback button. */}
+      <Route path="/feedback" component={FeedbackPage} />
 
       {/* Legacy old-slug fall-through (great_falls -> greatfalls) */}
       <Route path="/great_falls">
@@ -64,6 +69,9 @@ function App() {
           <Router>
             <CityProvider>
               <AppRouter />
+              {/* Global floating Feedback button -- hides itself on /feedback
+                  and admin routes; see component for details. */}
+              <FeedbackButton />
             </CityProvider>
           </Router>
         </TooltipProvider>

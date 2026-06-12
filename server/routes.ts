@@ -499,6 +499,91 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     });
   });
 
+  // ===== Phase 7: user feedback (public submit + cockpit triage) =====
+  //
+  // Public users post via /api/feedback (no auth, rate-limited per IP).
+  // Cockpit admins read + triage via /api/admin/feedback* with requireAdmin.
+
+  const { submitFeedbackSchema } = await import("../shared/schema.js");
+
+  // ---- Simple in-memory rate limit. 5 submissions per IP per 10 minutes.
+  // Resets on cold start, which is fine for a small site -- this isn't an
+  // anti-abuse layer, just a flood guard. Real spam handling lives in the
+  // /admin/feedback triage UI (admin can mark archived or delete).
+  const feedbackRateBucket = new Map<string, { count: number; resetAt: number }>();
+  function clientKey(req: any): string {
+    const fwd = (req.headers["x-forwarded-for"] as string | undefined) || "";
+    const ip = fwd.split(",")[0]?.trim() || req.ip || "unknown";
+    return ip;
+  }
+
+  app.post("/api/feedback", async (req, res) => {
+    const parsed = submitFeedbackSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ error: "Please fill in the feedback message.", details: parsed.error.flatten() });
+    }
+    // Rate limit
+    const key = clientKey(req);
+    const now = Date.now();
+    const bucket = feedbackRateBucket.get(key);
+    if (bucket && bucket.resetAt > now) {
+      if (bucket.count >= 5) {
+        return res.status(429).json({
+          error: "Thanks for the enthusiasm. Please wait a few minutes before sending more.",
+        });
+      }
+      bucket.count++;
+    } else {
+      feedbackRateBucket.set(key, { count: 1, resetAt: now + 10 * 60 * 1000 });
+    }
+
+    const ua = (req.headers["user-agent"] as string | undefined)?.slice(0, 500) ?? null;
+    // Empty-string optional fields collapse to null so the DB stays clean.
+    const norm = (s: string | undefined) => (s && s.trim() ? s.trim() : null);
+    const row = await storage.createFeedback({
+      body: parsed.data.body.trim(),
+      name: norm(parsed.data.name),
+      email: norm(parsed.data.email),
+      citySlug: norm(parsed.data.citySlug),
+      pageUrl: norm(parsed.data.pageUrl),
+      userAgent: ua,
+    } as any);
+    res.status(201).json({ ok: true, id: row.id });
+  });
+
+  // List all feedback for the cockpit. Optional filters.
+  app.get("/api/admin/feedback", requireAdmin, async (req, res) => {
+    const status = (req.query.status as string | undefined) ?? "open";
+    const citySlug = (req.query.citySlug as string | undefined) || undefined;
+    const limit = Math.min(Number(req.query.limit ?? 200), 1000);
+    const items = await storage.listFeedback({
+      status: (["open", "in_progress", "resolved", "archived", "all"].includes(status)
+        ? (status as any)
+        : "open"),
+      citySlug,
+      limit,
+    });
+    const openCount = await storage.countOpenFeedback();
+    res.json({ items, openCount });
+  });
+
+  // Patch status / admin note.
+  app.patch("/api/admin/feedback/:id", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const patchSchema = z.object({
+      status: z.enum(["open", "in_progress", "resolved", "archived"]).optional(),
+      adminNote: z.string().max(4000).optional().nullable(),
+    });
+    const parsed = patchSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const updated = await storage.updateFeedback(id, parsed.data as any);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    res.json(updated);
+  });
+
   // Edit log + patterns (for the "learning from manual edits" panel)
   app.get("/api/admin/edits", requireAdmin, async (req, res) => {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);

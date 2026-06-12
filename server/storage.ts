@@ -9,6 +9,7 @@ import {
   stories, events, sources, ingestRuns, storySources, storyEdits,
   historyStories, classificationRules, meta, cities,
   feedPresets, feedPresetEvents,
+  feedback,
   buildFilterSignature,
 } from "../shared/schema.js";
 import type {
@@ -35,6 +36,9 @@ import type {
   FeedPresetEvent,
   InsertFeedPresetEvent,
   FeedPresetAction,
+  Feedback,
+  InsertFeedback,
+  FeedbackStatus,
 } from "../shared/schema.js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -413,6 +417,19 @@ export interface IStorage {
     cityId?: number | null;
     limit?: number;
   }): Promise<Array<{ filterSignature: string; uses: number }>>;
+
+  // ----- Phase 7: user feedback -----
+  createFeedback(input: InsertFeedback): Promise<Feedback>;
+  listFeedback(opts?: {
+    status?: FeedbackStatus | "all";
+    citySlug?: string;
+    limit?: number;
+  }): Promise<Feedback[]>;
+  countOpenFeedback(): Promise<number>;
+  updateFeedback(
+    id: number,
+    fields: Partial<Pick<Feedback, "status" | "adminNote">>,
+  ): Promise<Feedback | undefined>;
 }
 
 // ------ DatabaseStorage implementation ------
@@ -1400,6 +1417,63 @@ export class DatabaseStorage implements IStorage {
     }));
   }
 
+
+  // ============================================================================
+  // Phase 7: user feedback
+  // ============================================================================
+
+  async createFeedback(input: InsertFeedback): Promise<Feedback> {
+    const rows = await db.insert(feedback).values(input as any).returning();
+    return rows[0] as Feedback;
+  }
+
+  async listFeedback(opts: {
+    status?: FeedbackStatus | "all";
+    citySlug?: string;
+    limit?: number;
+  } = {}): Promise<Feedback[]> {
+    const conds: any[] = [];
+    if (opts.status && opts.status !== "all") {
+      conds.push(eq(feedback.status, opts.status as any));
+    }
+    if (opts.citySlug) conds.push(eq(feedback.citySlug, opts.citySlug));
+    const where = conds.length ? and(...conds) : undefined;
+    const rows = await db
+      .select()
+      .from(feedback)
+      .where(where as any)
+      .orderBy(desc(feedback.createdAt))
+      .limit(opts.limit ?? 200);
+    return rows as Feedback[];
+  }
+
+  async countOpenFeedback(): Promise<number> {
+    const rows = await db
+      .select({ c: sql<number>`count(*)::int` })
+      .from(feedback)
+      .where(eq(feedback.status, "open" as any));
+    return rows[0]?.c ?? 0;
+  }
+
+  async updateFeedback(
+    id: number,
+    fields: Partial<Pick<Feedback, "status" | "adminNote">>,
+  ): Promise<Feedback | undefined> {
+    const set: Record<string, any> = {};
+    if (fields.status !== undefined) {
+      set.status = fields.status;
+      if (fields.status === "resolved") {
+        set.resolvedAt = new Date().toISOString();
+      }
+    }
+    if (fields.adminNote !== undefined) set.adminNote = fields.adminNote;
+    if (Object.keys(set).length === 0) {
+      const rows = await db.select().from(feedback).where(eq(feedback.id, id)).limit(1);
+      return rows[0] as Feedback | undefined;
+    }
+    const rows = await db.update(feedback).set(set).where(eq(feedback.id, id)).returning();
+    return rows[0] as Feedback | undefined;
+  }
 }
 
 export const storage = new DatabaseStorage();

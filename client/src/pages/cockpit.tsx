@@ -21,7 +21,7 @@ import { apiRequest, getAdminToken } from "@/lib/queryClient";
 import { AdminCityProvider, useAdminCity } from "@/lib/admin-city-context";
 import { DESK_META, type DeskId } from "@/lib/format";
 import { StoryEditDialog } from "@/components/StoryEditDialog";
-import { Pencil } from "lucide-react";
+import { Pencil, Inbox, MessageSquare } from "lucide-react";
 import type { Story } from "@shared/schema";
 
 // ---- Types mirroring the server payloads ----
@@ -233,6 +233,41 @@ function CockpitInner() {
   const [error, setError] = useState<string | null>(null);
   // When non-null, a story is open in the editor dialog.
   const [editing, setEditing] = useState<Story | null>(null);
+  // Feedback inbox (cockpit triage panel). Loaded on mount + after any
+  // PATCH so the open count badge stays accurate.
+  const [feedbackItems, setFeedbackItems] = useState<any[]>([]);
+  const [openFeedbackCount, setOpenFeedbackCount] = useState(0);
+  const [feedbackStatusFilter, setFeedbackStatusFilter] = useState<"open" | "in_progress" | "resolved" | "archived" | "all">("open");
+
+  // Load + reload feedback whenever the filter changes.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", `/api/admin/feedback?status=${feedbackStatusFilter}&limit=100`);
+        const body = await res.json();
+        if (cancelled) return;
+        setFeedbackItems(body.items ?? []);
+        setOpenFeedbackCount(body.openCount ?? 0);
+      } catch {
+        /* admin can retry by changing the filter */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [feedbackStatusFilter]);
+
+  async function patchFeedback(id: number, patch: Record<string, unknown>) {
+    try {
+      const res = await apiRequest("PATCH", `/api/admin/feedback/${id}`, patch);
+      if (!res.ok) return;
+      const updated = await res.json();
+      setFeedbackItems((prev) => prev.map((f) => (f.id === id ? updated : f)));
+      // Refresh open count via a quick re-list -- cheap, single query.
+      const r = await apiRequest("GET", `/api/admin/feedback?status=open&limit=1`);
+      const b = await r.json();
+      setOpenFeedbackCount(b.openCount ?? 0);
+    } catch {}
+  }
 
   // Load presets + signatures whenever the admin's city changes.
   useEffect(() => {
@@ -462,6 +497,79 @@ function CockpitInner() {
               ))}
             </div>
           )}
+
+          {/* Feedback inbox: surface user-submitted feedback right here in
+              the cockpit so the same person who triages stories also sees
+              the bug reports / feature requests / fact-corrections. */}
+          <h2 className="mt-6 mb-2 flex items-center gap-2 font-mono text-[0.65rem] uppercase tracking-[0.18em] text-muted-foreground">
+            <MessageSquare className="h-3 w-3" />
+            User feedback
+            {openFeedbackCount > 0 && (
+              <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[0.55rem] font-medium text-amber-600 dark:text-amber-400">
+                {openFeedbackCount} open
+              </span>
+            )}
+          </h2>
+          <select
+            value={feedbackStatusFilter}
+            onChange={(e) => setFeedbackStatusFilter(e.target.value as any)}
+            className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1 text-[0.7rem] text-muted-foreground"
+          >
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="resolved">Resolved</option>
+            <option value="archived">Archived</option>
+            <option value="all">All</option>
+          </select>
+          <div className="space-y-2">
+            {feedbackItems.length === 0 ? (
+              <p className="text-[0.7rem] text-muted-foreground">No feedback in this bucket.</p>
+            ) : (
+              feedbackItems.map((f) => (
+                <div key={f.id} className="rounded-md border border-border/40 bg-card/30 p-2 text-[0.7rem]">
+                  <div className="flex items-center gap-2 text-[0.6rem] text-muted-foreground">
+                    <span>#{f.id}</span>
+                    <span>
+                      {new Date(f.createdAt).toLocaleString(undefined, {
+                        month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                      })}
+                    </span>
+                    {f.citySlug && <span className="ml-auto uppercase tracking-[0.1em]">{f.citySlug}</span>}
+                  </div>
+                  <p className="mt-1 whitespace-pre-wrap break-words text-foreground">
+                    {f.body}
+                  </p>
+                  {(f.name || f.email) && (
+                    <p className="mt-1 text-[0.6rem] text-muted-foreground">
+                      from {f.name ?? "anonymous"}
+                      {f.email && <> · <a href={`mailto:${f.email}`} className="underline">{f.email}</a></>}
+                    </p>
+                  )}
+                  {f.pageUrl && (
+                    <p className="mt-1 text-[0.6rem] text-muted-foreground/70">
+                      on <a href={f.pageUrl} target="_blank" rel="noopener noreferrer" className="underline">{f.pageUrl}</a>
+                    </p>
+                  )}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                    {["open", "in_progress", "resolved", "archived"].map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => patchFeedback(f.id, { status: s })}
+                        className={`rounded-full border px-1.5 py-0.5 text-[0.55rem] uppercase tracking-[0.1em] ${
+                          f.status === s
+                            ? "border-primary bg-primary/15 text-primary"
+                            : "border-border/40 bg-background/40 text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {s.replace("_", " ")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </aside>
 
         {/* ---- Center: filter editor ---- */}

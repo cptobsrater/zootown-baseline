@@ -389,3 +389,45 @@ export function buildFilterSignature(input: {
   ];
   return parts.join(";");
 }
+
+// ============================================================================
+// Phase 7: User feedback (public submissions -> admin cockpit triage)
+// ============================================================================
+
+export const FEEDBACK_STATUSES = ["open", "in_progress", "resolved", "archived"] as const;
+export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
+
+export const feedback = pgTable(
+  "feedback",
+  {
+    id: serial("id").primaryKey(),
+    body: text("body").notNull(),
+    name: text("name"),
+    email: text("email"),
+    citySlug: text("city_slug"),
+    pageUrl: text("page_url"),
+    userAgent: text("user_agent"),
+    status: text("status").$type<FeedbackStatus>().notNull().default("open"),
+    adminNote: text("admin_note"),
+    createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { mode: "string", withTimezone: true }),
+  },
+  (t) => ({
+    byStatus: index("feedback_status_created_idx").on(t.status, t.createdAt),
+  }),
+);
+
+export type Feedback = typeof feedback.$inferSelect;
+export type InsertFeedback = typeof feedback.$inferInsert;
+
+// Validation schema for the public POST /api/feedback endpoint. All
+// rate-limiting + spam guardrails live in the route handler; this is
+// just shape validation.
+export const submitFeedbackSchema = z.object({
+  body: z.string().min(5, "Tell us a bit more").max(4000, "Please trim this down"),
+  name: z.string().trim().max(120).optional().or(z.literal("")),
+  email: z.string().trim().email("That doesn't look like a valid email").max(200).optional().or(z.literal("")),
+  citySlug: z.string().trim().max(40).optional().or(z.literal("")),
+  pageUrl: z.string().trim().max(800).optional().or(z.literal("")),
+});
+export type SubmitFeedback = z.infer<typeof submitFeedbackSchema>;
