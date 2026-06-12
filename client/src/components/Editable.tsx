@@ -14,6 +14,12 @@ interface Props {
    * sizing (block, flex item, etc.). The inner content is unchanged.
    */
   className?: string;
+  /**
+   * Optional quick-action buttons rendered to the LEFT of the pencil button.
+   * Use this for pin/hide/etc. so the call site can pass any actions it wants
+   * without forcing them on every Editable consumer.
+   */
+  quickActions?: ReactNode;
 }
 
 /**
@@ -34,7 +40,7 @@ interface Props {
  * want to touch those; a wrapper layer lets us add edit affordances without
  * forking the card components.
  */
-export function Editable({ children, onEdit, label = "Edit", className }: Props) {
+export function Editable({ children, onEdit, label = "Edit", className, quickActions }: Props) {
   const { isEditing } = useEditMode();
   const [hovered, setHovered] = useState(false);
 
@@ -62,19 +68,24 @@ export function Editable({ children, onEdit, label = "Edit", className }: Props)
       onMouseLeave={() => setHovered(false)}
     >
       {children}
-      <button
-        type="button"
-        onClick={onPencil}
-        aria-label={label}
-        title={label}
+      <div
         className={
-          "absolute right-2 top-2 z-30 inline-flex items-center gap-1 rounded-md border border-amber-400/70 bg-amber-400 px-2 py-1 text-[0.7rem] font-medium text-amber-950 shadow-md transition " +
+          "absolute right-2 top-2 z-30 flex items-center gap-1 transition " +
           (hovered ? "opacity-100" : "opacity-0 pointer-events-none")
         }
       >
-        <Pencil className="h-3 w-3" />
-        {label}
-      </button>
+        {quickActions}
+        <button
+          type="button"
+          onClick={onPencil}
+          aria-label={label}
+          title={label}
+          className="inline-flex items-center gap-1 rounded-md border border-amber-400/70 bg-amber-400 px-2 py-1 text-[0.7rem] font-medium text-amber-950 shadow-md"
+        >
+          <Pencil className="h-3 w-3" />
+          {label}
+        </button>
+      </div>
     </div>
   );
 }

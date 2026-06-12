@@ -11,6 +11,7 @@ import {
   feedPresets, feedPresetEvents,
   feedback,
   storyDeletions,
+  sponsors, sponsorCities,
   buildFilterSignature,
 } from "../shared/schema.js";
 import type {
@@ -43,6 +44,11 @@ import type {
   StoryDeletion,
   InsertStoryDeletion,
   StoryDeletionReason,
+  Sponsor,
+  InsertSponsor,
+  SponsorCity,
+  SponsorWithCities,
+  SponsorEditInput,
 } from "../shared/schema.js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -148,6 +154,12 @@ function rowToStory(r: any): Story {
       : Array.isArray(r.altDesks)
       ? (r.altDesks as string[])
       : [],
+    // Editorial pinning. Returned as ISO string when pinned, null otherwise.
+    pinnedAt: (() => {
+      const raw = r.pinned_at ?? r.pinnedAt ?? null;
+      if (!raw) return null;
+      return raw instanceof Date ? raw.toISOString() : String(raw);
+    })(),
   };
 }
 
@@ -357,6 +369,9 @@ export interface IStorage {
   getTopStories(limit?: number, cityId?: number): Promise<Story[]>;
   updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt" | "onCalendar">>): Promise<Story | undefined>;
   markStoryReviewed(id: number, reviewed: boolean): Promise<Story | undefined>;
+  // Pin / unpin a story. true = pin now (sets pinned_at = now()),
+  // false = unpin (sets pinned_at = NULL).
+  setStoryPinned(id: number, pinned: boolean): Promise<Story | undefined>;
   deleteStory(id: number): Promise<boolean>;
   logEdit(edit: Omit<StoryEdit, "id">): Promise<StoryEdit>;
   listEdits(limit?: number): Promise<StoryEdit[]>;
@@ -445,6 +460,16 @@ export interface IStorage {
     sinceDays?: number;
     limit?: number;
   }): Promise<StoryDeletion[]>;
+
+  // ----- Phase 8: sponsors (replaces static client/src/lib/sponsors.ts) -----
+  listSponsorsWithCities(opts?: { activeOnly?: boolean }): Promise<SponsorWithCities[]>;
+  listSponsorsForCity(citySlug: string): Promise<SponsorWithCities[]>;
+  updateSponsor(id: string, patch: SponsorEditInput): Promise<SponsorWithCities | undefined>;
+  createSponsor(
+    insert: InsertSponsor,
+    cities: { citySlug: string; sortOrder: number }[],
+  ): Promise<SponsorWithCities>;
+  deleteSponsor(id: string): Promise<boolean>;
 }
 
 // ------ DatabaseStorage implementation ------
@@ -513,6 +538,22 @@ export class DatabaseStorage implements IStorage {
       // for limit=20 it is 7. Floor at 2 so tiny pages still work.
       const perDeskCap = Math.max(2, Math.ceil(limit * 0.35));
 
+      // Pre-pass: pinned rows always go first, in newest-pin order, and DO
+      // NOT count against any desk's cap. This means an admin can pin up to
+      // limit rows and they'll all surface, but the diversity rule still
+      // applies to whatever unpinned content fills the rest of the page.
+      const pinnedRows = await db
+        .select()
+        .from(stories)
+        .where(
+          and(whereClause as any, sql`${stories.pinnedAt} IS NOT NULL`) as any,
+        )
+        .orderBy(desc(stories.pinnedAt as any))
+        .limit(limit);
+      const pinnedItems = (pinnedRows as any[]).map(rowToStory);
+      const pinnedIds = new Set(pinnedItems.map((s) => s.id));
+      const remainingLimit = Math.max(0, limit - pinnedItems.length);
+
       // Stratified fetch: pull the newest perDeskCap+1 rows from EACH desk
       // present in the city via a window function. This guarantees variety
       // even when one desk (e.g. an Eventbrite burst) has hundreds of rows
@@ -529,12 +570,15 @@ export class DatabaseStorage implements IStorage {
             ROW_NUMBER() OVER (PARTITION BY desk ORDER BY published_at DESC) AS rn
           FROM stories
           WHERE ${baseWhere ?? sql`TRUE`}
+            AND pinned_at IS NULL
         )
         SELECT * FROM ranked WHERE rn <= ${perDeskFetch}
         ORDER BY published_at DESC
       `);
       // postgres-js returns the rows as a plain array on .execute().
-      const buffer = ((stratifiedRows as unknown as any[]) || []).map(rowToStory);
+      const buffer = ((stratifiedRows as unknown as any[]) || [])
+        .map(rowToStory)
+        .filter((s) => !pinnedIds.has(s.id));
 
       // Pick chronologically while enforcing the per-desk cap. Any rows that
       // would push a desk over its cap go into `overflow` and only get used
@@ -545,29 +589,38 @@ export class DatabaseStorage implements IStorage {
       for (const s of buffer) {
         const d = s.desk ?? "";
         const used = counts.get(d) ?? 0;
-        if (used < perDeskCap && picked.length < limit) {
+        if (used < perDeskCap && picked.length < remainingLimit) {
           picked.push(s);
           counts.set(d, used + 1);
         } else {
           overflow.push(s);
         }
       }
-      while (picked.length < limit && overflow.length > 0) {
+      while (picked.length < remainingLimit && overflow.length > 0) {
         picked.push(overflow.shift()!);
       }
+      // Prepend pinned rows so they always lead the page.
+      const finalPicked = [...pinnedItems, ...picked];
+      // From here on, `picked` refers to the pinned-plus-stratified result.
       // Page 2 falls back to raw chronological from the appropriate offset.
       // Use `limit` as the next cursor offset -- the client treats page 2 as
       // "next limit rows in chronological order", which is fine because the
       // dominant-desk rows we deferred on page 1 will reappear there.
-      const nextCursor = picked.length >= limit && total > limit ? limit : null;
-      return { items: picked, nextCursor, total };
+      const nextCursor = finalPicked.length >= limit && total > limit ? limit : null;
+      return { items: finalPicked, nextCursor, total };
     }
 
+    // Pinned rows float to the top of every feed they appear in. Among
+    // multiple pinned rows, newest-pin-first. Among unpinned rows, the usual
+    // newest-publish-first.
     const rows = await db
       .select()
       .from(stories)
       .where(whereClause as any)
-      .orderBy(desc(stories.publishedAt))
+      .orderBy(
+        sql`${stories.pinnedAt} DESC NULLS LAST`,
+        desc(stories.publishedAt),
+      )
       .limit(limit)
       .offset(cursor);
 
@@ -666,6 +719,14 @@ export class DatabaseStorage implements IStorage {
   async markStoryReviewed(id: number, reviewed: boolean): Promise<Story | undefined> {
     const reviewedAt = reviewed ? new Date().toISOString() : null;
     await db.update(stories).set({ isReviewed: reviewed, reviewedAt }).where(eq(stories.id, id));
+    return this.getStory(id);
+  }
+
+  async setStoryPinned(id: number, pinned: boolean): Promise<Story | undefined> {
+    // pinned_at carries both the on/off state AND the order among pins
+    // (newer-pin-first), so we always stamp it with the current time on pin.
+    const pinnedAt = pinned ? new Date().toISOString() : null;
+    await db.update(stories).set({ pinnedAt }).where(eq(stories.id, id));
     return this.getStory(id);
   }
 
@@ -1546,6 +1607,115 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(storyDeletions.deletedAt))
       .limit(opts.limit ?? 200);
     return rows as StoryDeletion[];
+  }
+
+  // ----- Sponsors -----
+  // Fan out one query into the parent table plus the join table, then stitch
+  // the eligibility list onto each sponsor in JS. Could be a CTE, but the row
+  // count is tiny (<50 ever) and the two-query form is far easier to read.
+  async listSponsorsWithCities(
+    opts: { activeOnly?: boolean } = {},
+  ): Promise<SponsorWithCities[]> {
+    const baseQuery = opts.activeOnly
+      ? db.select().from(sponsors).where(eq(sponsors.isActive, true))
+      : db.select().from(sponsors);
+    const rows = (await baseQuery.orderBy(asc(sponsors.name))) as Sponsor[];
+    if (rows.length === 0) return [];
+    const cityRows = (await db
+      .select()
+      .from(sponsorCities)
+      .where(inArray(sponsorCities.sponsorId, rows.map((r) => r.id)))) as SponsorCity[];
+    const cityByPid = new Map<string, { citySlug: string; sortOrder: number }[]>();
+    for (const r of cityRows) {
+      const list = cityByPid.get(r.sponsorId) ?? [];
+      list.push({ citySlug: r.citySlug, sortOrder: r.sortOrder });
+      cityByPid.set(r.sponsorId, list);
+    }
+    return rows.map((s) => ({
+      ...s,
+      cities: (cityByPid.get(s.id) ?? []).sort((a, b) => a.sortOrder - b.sortOrder),
+    }));
+  }
+
+  // Hot path for the public feed: only return sponsors eligible for one city,
+  // sorted by sort_order. The cities array on the returned shape contains the
+  // single eligibility row for THIS city, so the round-robin slot picker can
+  // still read sortOrder if it wants.
+  async listSponsorsForCity(citySlug: string): Promise<SponsorWithCities[]> {
+    const rows = (await db
+      .select({ s: sponsors, c: sponsorCities })
+      .from(sponsors)
+      .innerJoin(sponsorCities, eq(sponsorCities.sponsorId, sponsors.id))
+      .where(and(eq(sponsors.isActive, true), eq(sponsorCities.citySlug, citySlug)))
+      .orderBy(asc(sponsorCities.sortOrder))) as { s: Sponsor; c: SponsorCity }[];
+    return rows.map(({ s, c }) => ({
+      ...s,
+      cities: [{ citySlug: c.citySlug, sortOrder: c.sortOrder }],
+    }));
+  }
+
+  async updateSponsor(
+    id: string,
+    patch: SponsorEditInput,
+  ): Promise<SponsorWithCities | undefined> {
+    const fields: Record<string, unknown> = {};
+    if (patch.name !== undefined) fields.name = patch.name;
+    if (patch.logoUrl !== undefined) fields.logoUrl = patch.logoUrl;
+    if (patch.logoAlt !== undefined) fields.logoAlt = patch.logoAlt;
+    if (patch.address !== undefined) fields.address = patch.address;
+    if (patch.phone !== undefined) fields.phone = patch.phone;
+    if (patch.tagline !== undefined) fields.tagline = patch.tagline;
+    if (patch.href !== undefined) fields.href = patch.href;
+    if (patch.instagram !== undefined) fields.instagram = patch.instagram;
+    if (patch.facebook !== undefined) fields.facebook = patch.facebook;
+    if (patch.isActive !== undefined) fields.isActive = patch.isActive;
+    fields.updatedAt = new Date().toISOString();
+
+    await db.update(sponsors).set(fields as any).where(eq(sponsors.id, id));
+
+    // cities is a SET replacement when provided -- the client sends the full
+    // desired eligibility list and we mirror it.
+    if (patch.cities !== undefined) {
+      await db.delete(sponsorCities).where(eq(sponsorCities.sponsorId, id));
+      if (patch.cities.length > 0) {
+        await db.insert(sponsorCities).values(
+          patch.cities.map((c) => ({
+            sponsorId: id,
+            citySlug: c.citySlug,
+            sortOrder: c.sortOrder,
+          })),
+        );
+      }
+    }
+
+    const all = await this.listSponsorsWithCities();
+    return all.find((s) => s.id === id);
+  }
+
+  async createSponsor(
+    insert: InsertSponsor,
+    cityList: { citySlug: string; sortOrder: number }[],
+  ): Promise<SponsorWithCities> {
+    await db.insert(sponsors).values(insert);
+    if (cityList.length > 0) {
+      await db.insert(sponsorCities).values(
+        cityList.map((c) => ({
+          sponsorId: insert.id,
+          citySlug: c.citySlug,
+          sortOrder: c.sortOrder,
+        })),
+      );
+    }
+    const all = await this.listSponsorsWithCities();
+    const created = all.find((s) => s.id === insert.id);
+    if (!created) throw new Error(`createSponsor: row ${insert.id} not found after insert`);
+    return created;
+  }
+
+  async deleteSponsor(id: string): Promise<boolean> {
+    // sponsor_cities cascades on delete, so we only need to remove the parent.
+    const result = await db.delete(sponsors).where(eq(sponsors.id, id));
+    return ((result as any)?.rowCount ?? 0) > 0;
   }
 }
 

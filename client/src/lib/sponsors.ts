@@ -1,27 +1,23 @@
 /**
  * Sponsor (banner ad) registry.
  *
- * Three rules govern placement in any feed:
+ * Sponsors moved from a static file into the `sponsors` Postgres table on
+ * 2026-06-12 to support in-place editing from the live site. This module
+ * preserves the SAME public function names that the feed code consumes
+ * (sponsorsForCity, shouldShowSponsorAfter, pickSponsorForSlot,
+ * bannerSlotForIndex) so consumers don't need to change.
+ *
+ * Three rules still govern placement in any feed:
  *
  *   1. The first sponsor banner attaches to the BOTTOM of the 2nd post
  *      (zero-indexed: position 1).
- *   2. After that, a banner appears under every 3rd post (positions 4,
- *      7, 10, 13, ...). The math is: insertAfterIndex === 1 ||
- *      (insertAfterIndex - 1) % 3 === 0.
- *   3. Banners ROTATE through the sponsors eligible for the active city.
- *      Round-robin starting from index 0, so the same banner never
- *      appears twice in a row when a city has 2+ eligible sponsors.
- *
- * Per-city eligibility is declared statically below so the rotation is
- * deterministic and offline-safe; no DB call needed for what's currently
- * three sponsors. When the list grows large enough to need management,
- * we'll move this to a `sponsors` table + admin form.
- *
- * Visual style is set by the SponsorBanner component, not here -- this
- * file is pure data.
+ *   2. After that, a banner appears under every 3rd post (positions 4, 7,
+ *      10, 13, ...).
+ *   3. Banners ROTATE through sponsors eligible for the active city, ordered
+ *      by sort_order on the sponsor_cities row, then round-robin.
  */
-
-import type { CitySlug } from "@shared/schema";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "./queryClient";
 
 export interface Sponsor {
   /** Stable slug; used as React key and event tag. */
@@ -40,97 +36,83 @@ export interface Sponsor {
   tagline?: string;
   /** Destination URL for the banner click. */
   href: string;
-  /** Per-city eligibility list (slugs). Banner only shown in these cities. */
-  cities: CitySlug[];
-  /**
-   * Optional social links rendered as small icons on the right side of the
-   * banner. Each is its own clickable target (stopPropagation), so tapping
-   * an icon goes to that social account rather than the banner's main href.
-   */
+  /** Optional social links rendered as small icons on the right. */
   instagram?: string;
   facebook?: string;
 }
 
-// Order matters: sponsors are rotated round-robin starting at index 0,
-// so the FIRST sponsor eligible for a given city is the one that appears
-// under the second post (the first banner slot).
-//
-// Current Missoula rotation (4 sponsors, cycle of 4):
-//   slot 0  (post #2)   Smoke City
-//   slot 1  (post #5)   Wheat Missoula
-//   slot 2  (post #8)   LOST Esthetics
-//   slot 3  (post #11)  Doc's
-//   slot 4  (post #14)  Smoke City again
-//
-// Great Falls rotation (2 sponsors): Wheat GF, Doc's, alternating.
-export const SPONSORS: Sponsor[] = [
-  {
-    id: "smoke-city-missoula",
-    name: "Smoke City Glass & Vape",
-    logo: "/sponsors/smokecity.png",
-    logoAlt: "Smoke City Glass & Vape logo",
-    address: "2400 Brooks St · Missoula, MT 59801",
-    phone: "(406) 304-3030",
-    // Click target: the exact Google Maps URL the sponsor requested -- a
-    // map view centered on the Brooks St shop with all Smoke City
-    // locations visible. Recipient sees the storefront pin, hours,
-    // photos, reviews, and a Directions button.
-    href: "https://www.google.com/maps/search/Smoke+City/@46.8715711,-114.0120254,14z/data=!3m1!4b1?entry=ttu&g_ep=EgoyMDI2MDYwMy4xIKXMDSoASAFQAw%3D%3D",
-    cities: ["missoula"],
-  },
-  {
-    id: "wheat-missoula",
-    name: "The Wheat Bakery & Deli — Missoula",
-    logo: "/sponsors/wheat.png",
-    logoAlt: "The Wheat Bakery & Deli logo",
-    address: "2520 S 3rd St W · Missoula, MT",
-    phone: "(406) 327-0900",
-    href: "https://wheatmissoula.com",
-    cities: ["missoula"],
-  },
-  {
-    id: "lost-esthetics",
-    name: "LOST Esthetics — Lash & Brow Studio",
-    logo: "/sponsors/lost.png",
-    logoAlt: "LOST Esthetics wordmark",
-    address: "110 E Broadway, Floor 6 · Missoula, MT 59802",
-    phone: "(406) 925-0549",
-    tagline: "Book online · Lash lifts, extensions, brows",
-    href: "https://lostesthetics.glossgenius.com/",
-    cities: ["missoula"],
-    instagram: "https://www.instagram.com/lost.esthetics/",
-    facebook: "https://www.facebook.com/profile.php?id=61584788651199",
-  },
-  {
-    id: "docs-sandwich",
-    name: "Doc's Sandwich Shop",
-    logo: "/sponsors/docs.png",
-    logoAlt: "Doc's Sandwich Shop logo",
-    address: "214 N Higgins Ave · Missoula, MT 59802",
-    phone: "(406) 542-7414",
-    tagline: "No Appointment Necessary",
-    href: "https://docsmt.com",
-    // Doc's runs in BOTH Missoula and Great Falls feeds.
-    cities: ["missoula", "greatfalls"],
-  },
-  {
-    id: "wheat-greatfalls",
-    name: "The Wheat Bakery & Deli — Great Falls",
-    logo: "/sponsors/wheat.png",
-    logoAlt: "The Wheat Bakery & Deli logo",
-    address: "1116 9th St South · Great Falls, MT",
-    phone: "(406) 771-7456",
-    href: "https://wheatgreatfalls.com",
-    cities: ["greatfalls"],
-  },
-];
+/** Wire shape returned by /api/sponsors?city=<slug>. */
+interface ApiSponsor {
+  id: string;
+  name: string;
+  logoUrl: string;
+  logoAlt: string;
+  address: string;
+  phone: string;
+  tagline: string | null;
+  href: string;
+  instagram: string | null;
+  facebook: string | null;
+  isActive: boolean;
+  cities: { citySlug: string; sortOrder: number }[];
+}
+
+function fromApi(s: ApiSponsor): Sponsor {
+  return {
+    id: s.id,
+    name: s.name,
+    logo: s.logoUrl,
+    logoAlt: s.logoAlt,
+    address: s.address,
+    phone: s.phone,
+    tagline: s.tagline ?? undefined,
+    href: s.href,
+    instagram: s.instagram ?? undefined,
+    facebook: s.facebook ?? undefined,
+  };
+}
+
+/**
+ * Synchronous cache keyed by citySlug. Populated by useCitySponsors() the
+ * first time a feed renders for that city. The legacy sponsorsForCity() and
+ * pickSponsorForSlot() consumers read from this cache.
+ *
+ * Why synchronous? The feed code already lives inside React render; making
+ * sponsorsForCity() async would force every consumer to handle a loading
+ * state for what is fundamentally chrome data. Pre-warming via the hook +
+ * reading from a Map keeps the call sites unchanged.
+ */
+const cache = new Map<string, Sponsor[]>();
+
+/**
+ * React hook that fetches sponsors for a city and warms the synchronous
+ * cache. Call this once near the top of any page that renders the feed
+ * (Home, calendar, etc.). The fetch is deduped/cached by react-query so
+ * mounting the hook in multiple components is cheap.
+ */
+export function useCitySponsors(citySlug: string) {
+  const q = useQuery<Sponsor[]>({
+    queryKey: ["/api/sponsors", citySlug],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/sponsors?city=${encodeURIComponent(citySlug)}`);
+      const data = (await res.json()) as { items: ApiSponsor[] };
+      const mapped = data.items.map(fromApi);
+      cache.set(citySlug, mapped);
+      return mapped;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  return q;
+}
 
 /**
  * Return the sponsors eligible for a given city slug, in declaration order.
- * Empty array = no sponsors yet, so the feed should not insert any banners.
+ * Reads from the synchronous cache that useCitySponsors() warms. Returns
+ * [] if the hook hasn't resolved yet -- in that case no banners are
+ * inserted, which is the safe default.
  */
 export function sponsorsForCity(citySlug: string): Sponsor[] {
-  return SPONSORS.filter((s) => s.cities.includes(citySlug as CitySlug));
+  return cache.get(citySlug) ?? [];
 }
 
 /**
@@ -147,14 +129,14 @@ export function shouldShowSponsorAfter(index: number): boolean {
 
 /**
  * Resolve which sponsor occupies the slot for a given (city, index) pair.
- * Uses round-robin starting at the first eligible sponsor.
+ * Uses round-robin over the eligible sponsors for that city.
  *
  *   Banner 1 (after post 2)  -> sponsors[0]
  *   Banner 2 (after post 5)  -> sponsors[1]
  *   Banner 3 (after post 8)  -> sponsors[2 % eligible.length]
- *   ...
  *
- * Returns null when there are no eligible sponsors for the city.
+ * Returns null when there are no eligible sponsors for the city (either no
+ * rows yet, or the hook hasn't loaded).
  */
 export function pickSponsorForSlot(citySlug: string, slotIndex: number): Sponsor | null {
   const eligible = sponsorsForCity(citySlug);
@@ -168,10 +150,7 @@ export function pickSponsorForSlot(citySlug: string, slotIndex: number): Sponsor
  *   index=1  -> slot 0
  *   index=4  -> slot 1
  *   index=7  -> slot 2
- *
- * Pre-condition: shouldShowSponsorAfter(index) must return true.
  */
 export function bannerSlotForIndex(index: number): number {
-  // (index - 1) / 3 by construction (index = 1 + 3k).
   return Math.max(0, Math.floor((index - 1) / 3));
 }

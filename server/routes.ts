@@ -199,6 +199,80 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(updated);
   });
 
+  // ----- Admin: create a new story (editorial "+ Add story" flow) -----
+  // Pared-down vs. the ingest pipeline: the admin types a headline, summary,
+  // and source URL, and we fill defaults for everything else. fetchedAt and
+  // publishedAt are stamped server-side; sourceType defaults to "manual" so
+  // we can distinguish hand-curated rows from ingest output later.
+  const createStorySchema = z.object({
+    headline: z.string().min(1).max(300),
+    summary: z.string().min(1).max(2000),
+    desk: z.enum([
+      "city", "business", "crime", "sports", "health", "entertainment", "people", "history",
+    ]),
+    cityId: z.number().int().positive(),
+    sourceUrl: z.string().url().max(2048),
+    sourceName: z.string().min(1).max(200),
+    tags: z.array(z.string().max(60)).max(20).optional().default([]),
+    location: z.string().max(200).nullable().optional(),
+    onCalendar: z.boolean().optional().default(false),
+    startsAt: z.string().nullable().optional(),
+    endsAt: z.string().nullable().optional(),
+  });
+  app.post("/api/admin/stories", requireAdmin, async (req, res) => {
+    const parsed = createStorySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const now = new Date().toISOString();
+    const created = await storage.createStory({
+      headline: parsed.data.headline,
+      summary: parsed.data.summary,
+      desk: parsed.data.desk as any,
+      tags: JSON.stringify(parsed.data.tags),
+      sourceName: parsed.data.sourceName,
+      sourceUrl: parsed.data.sourceUrl,
+      sourceType: "manual",
+      publishedAt: now,
+      fetchedAt: now,
+      location: parsed.data.location ?? null,
+      cityId: parsed.data.cityId,
+      modState: "approved",
+      onCalendar: parsed.data.onCalendar ?? false,
+      startsAt: parsed.data.startsAt ?? null,
+      endsAt: parsed.data.endsAt ?? null,
+      isReviewed: true,
+      reviewedAt: now,
+      riskLevel: "low",
+      isSeeded: false,
+    } as any);
+    res.json(created);
+  });
+
+  // ----- Admin: pin / unpin a story -----
+  // Lightweight endpoint used by the editorial-mode quick-action buttons.
+  // pinned=true stamps pinned_at = now() (the row floats to the top of feeds
+  // it appears in); pinned=false clears pinned_at.
+  app.patch("/api/admin/stories/:id/pin", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const schema = z.object({ pinned: z.boolean() });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const before = await storage.getStory(id);
+    if (!before) return res.status(404).json({ error: "Not found" });
+    const updated = await storage.setStoryPinned(id, parsed.data.pinned);
+    if (!updated) return res.status(404).json({ error: "Not found" });
+    // Log the pin action so we have a paper trail in the edit history.
+    await storage.logEdit({
+      storyId: id,
+      field: "pinnedAt",
+      beforeValue: before.pinnedAt ?? "",
+      afterValue: updated.pinnedAt ?? "",
+      sourceName: before.sourceName,
+      editedAt: new Date().toISOString(),
+    });
+    res.json(updated);
+  });
+
   app.patch("/api/admin/stories/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
@@ -307,6 +381,77 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const sinceDays = Math.min(Number(req.query.sinceDays ?? 90), 365);
     const limit = Math.min(Number(req.query.limit ?? 100), 500);
     res.json({ items: await storage.listStoryDeletions({ category, sinceDays, limit }) });
+  });
+
+  // ----- Sponsors -----
+  // Public read. Optional ?city=<slug> filter narrows to the rotation for one
+  // city; without it, returns the full admin list. Both paths only return
+  // is_active=true rows to the public consumer.
+  app.get("/api/sponsors", async (req, res) => {
+    const city = (req.query.city as string | undefined)?.trim();
+    if (city) {
+      res.json({ items: await storage.listSponsorsForCity(city) });
+      return;
+    }
+    res.json({ items: await storage.listSponsorsWithCities({ activeOnly: true }) });
+  });
+
+  // Admin-only management surface. Lists ALL sponsors including disabled ones.
+  app.get("/api/admin/sponsors", requireAdmin, async (_req, res) => {
+    res.json({ items: await storage.listSponsorsWithCities() });
+  });
+
+  const { sponsorEditSchema } = await import("../shared/schema.js");
+  app.patch("/api/admin/sponsors/:id", requireAdmin, async (req, res) => {
+    const id = String(req.params.id);
+    const parsed = sponsorEditSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const updated = await storage.updateSponsor(id, parsed.data);
+    if (!updated) return res.status(404).json({ error: "sponsor_not_found" });
+    res.json({ sponsor: updated });
+  });
+
+  // Create payload requires id + name + logoUrl + href. cities array optional.
+  const sponsorCreateSchema = z.object({
+    id: z.string().min(1).max(80).regex(/^[a-z0-9-]+$/),
+    name: z.string().min(1).max(120),
+    logoUrl: z.string().min(1).max(500),
+    logoAlt: z.string().max(200).optional().default(""),
+    address: z.string().max(300).optional().default(""),
+    phone: z.string().max(50).optional().default(""),
+    tagline: z.string().max(200).nullable().optional(),
+    href: z.string().url().max(2048),
+    instagram: z.string().url().max(2048).nullable().optional(),
+    facebook: z.string().url().max(2048).nullable().optional(),
+    isActive: z.boolean().optional().default(true),
+    cities: z
+      .array(
+        z.object({
+          citySlug: z.string().min(1).max(50),
+          sortOrder: z.number().int().min(0).max(10_000),
+        }),
+      )
+      .optional()
+      .default([]),
+  });
+  app.post("/api/admin/sponsors", requireAdmin, async (req, res) => {
+    const parsed = sponsorCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const { cities: cityList, ...row } = parsed.data;
+    try {
+      const created = await storage.createSponsor(row as any, cityList);
+      res.json({ sponsor: created });
+    } catch (e: any) {
+      // Most likely a primary-key collision on id.
+      res.status(409).json({ error: "sponsor_create_failed", detail: String(e?.message ?? e) });
+    }
+  });
+
+  app.delete("/api/admin/sponsors/:id", requireAdmin, async (req, res) => {
+    const id = String(req.params.id);
+    const ok = await storage.deleteSponsor(id);
+    if (!ok) return res.status(404).json({ error: "sponsor_not_found" });
+    res.json({ ok: true });
   });
 
   // ----- Classification rules CRUD -----
