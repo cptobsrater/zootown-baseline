@@ -14,11 +14,19 @@ import {
   shouldShowSponsorAfter,
   bannerSlotForIndex,
   pickSponsorForSlot,
+  useCitySponsors,
 } from "@/lib/sponsors";
 import { SourcesDialog } from "@/components/SourcesDialog";
 import { Weather } from "@/components/Weather";
 import { DESK_META, type DeskId, parseTags, relativeTime } from "@/lib/format";
 import { ArrowUp, X } from "lucide-react";
+import { Editable } from "@/components/Editable";
+import { StoryEditDialog } from "@/components/StoryEditDialog";
+import { SponsorEditDialog } from "@/components/SponsorEditDialog";
+import { StoryQuickActions } from "@/components/StoryQuickActions";
+import { StoryCreateDialog } from "@/components/StoryCreateDialog";
+import { useEditMode } from "@/lib/edit-mode";
+import { Plus } from "lucide-react";
 
 interface StoriesPage {
   items: Story[];
@@ -129,6 +137,22 @@ export default function Home() {
   const [cursor, setCursor] = useState(0);
   const [items, setItems] = useState<Story[]>([]);
   const [selected, setSelected] = useState<Story | null>(null);
+  // Editorial-mode target: when the admin clicks the pencil overlay on a
+  // card, we stash that story here and mount the StoryEditDialog over the
+  // live page. setEditingStory(null) closes the dialog.
+  const [editingStory, setEditingStory] = useState<Story | null>(null);
+  // When the admin clicks the calendar-clock quick action we open the dialog
+  // with initialFocus="event" so it scrolls to the calendar block.
+  const [editingStoryFocus, setEditingStoryFocus] = useState<"event" | undefined>(undefined);
+  // Editorial-mode target for sponsor banners. Same idea as editingStory --
+  // the live banner stays in place; we mount a dedicated dialog over it.
+  const [editingSponsorId, setEditingSponsorId] = useState<string | null>(null);
+  // Toggle for the "+ Add story" dialog.
+  const [createOpen, setCreateOpen] = useState(false);
+  const { isEditing } = useEditMode();
+  // Warm the sponsor cache for the active city. The legacy synchronous
+  // sponsorsForCity()/pickSponsorForSlot() helpers read from this cache.
+  useCitySponsors(citySlug);
 
   // ---- Story deep links ----
   // When the URL is /:city/story/:storyId, auto-open the drawer to that
@@ -493,10 +517,47 @@ export default function Home() {
               </div>
             )}
 
+            {isEditing && (
+              <div className="mb-3 flex items-center justify-between rounded-md border border-amber-400/60 bg-amber-50 px-3 py-2">
+                <div className="text-xs text-amber-900">
+                  Editorial mode is on. Hover any card for edit handles.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCreateOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-400 px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-500"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add a story to this feed
+                </button>
+              </div>
+            )}
+
             <div className="space-y-3">
               {displayItems.map((s, idx) => (
                 <Fragment key={s.id}>
-                  <StoryCard story={s} onOpen={setSelected} />
+                  {/* Editable wraps the card with a hover pencil when
+                      editorial mode is on (admin token + ?edit=1). In normal
+                      browsing it is a transparent passthrough -- no extra DOM
+                      or handlers. */}
+                  <Editable
+                    onEdit={() => {
+                      setEditingStoryFocus(undefined);
+                      setEditingStory(s);
+                    }}
+                    label="Edit story"
+                    quickActions={
+                      <StoryQuickActions
+                        story={s}
+                        onEditEventTime={() => {
+                          setEditingStoryFocus("event");
+                          setEditingStory(s);
+                        }}
+                      />
+                    }
+                  >
+                    <StoryCard story={s} onOpen={setSelected} />
+                  </Editable>
                   {/* Sponsor banner rule (lib/sponsors.ts): attach a banner to
                       the bottom of the 2nd post (idx=1), then every 3rd post
                       after that (4, 7, 10, ...). Rotates round-robin through
@@ -512,7 +573,14 @@ export default function Home() {
                       const slot = bannerSlotForIndex(idx);
                       const sponsor = pickSponsorForSlot(citySlug, slot);
                       if (!sponsor) return null;
-                      return <SponsorBanner sponsor={sponsor} />;
+                      return (
+                        <Editable
+                          onEdit={() => setEditingSponsorId(sponsor.id)}
+                          label="Edit sponsor"
+                        >
+                          <SponsorBanner sponsor={sponsor} />
+                        </Editable>
+                      );
                     })()}
                 </Fragment>
               ))}
@@ -598,6 +666,54 @@ export default function Home() {
         onOpenRelated={(s) => setSelected(s)}
       />
       <SourcesDialog open={sourcesOpen} onOpenChange={setSourcesOpen} />
+
+      {/* Editorial mode: in-place story editor mounted over the live page.
+          Only rendered when editorial mode is on AND an admin clicked the
+          pencil on a card. onChange fires after a save/delete; we invalidate
+          the stories query so the feed refreshes without a full reload. */}
+      {isEditing && (
+        <>
+          <StoryEditDialog
+            story={editingStory}
+            open={!!editingStory}
+            onClose={() => {
+              setEditingStory(null);
+              setEditingStoryFocus(undefined);
+            }}
+            onChange={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/top-stories"] });
+            }}
+            initialFocus={editingStoryFocus}
+          />
+          <SponsorEditDialog
+            sponsorId={editingSponsorId}
+            open={!!editingSponsorId}
+            onClose={() => setEditingSponsorId(null)}
+            onChange={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/sponsors"] });
+            }}
+          />
+          <StoryCreateDialog
+            open={createOpen}
+            onClose={() => setCreateOpen(false)}
+            onCreated={() => {
+              queryClient.invalidateQueries({ queryKey: ["/api/stories"] });
+              queryClient.invalidateQueries({ queryKey: ["/api/top-stories"] });
+            }}
+            defaultDesk={(() => {
+              // If a single desk is selected, pre-fill it; otherwise default to
+              // "city" so admin can change if needed.
+              if (selectedDesks.size === 1) {
+                const d = selectedDesks.values().next().value;
+                return (d ?? "city") as DeskId;
+              }
+              return "city" as DeskId;
+            })()}
+            defaultCityId={currentCity.id}
+          />
+        </>
+      )}
     </div>
   );
 }

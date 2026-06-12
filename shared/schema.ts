@@ -90,6 +90,10 @@ export const stories = pgTable("stories", {
   // Secondary desks. Used by composite (multi-desk) feeds via the
   // `alt_desks && ARRAY[...]` overlap query. Default = empty array.
   altDesks: text("alt_desks").array().notNull().default(sql`ARRAY[]::text[]`),
+  // Editorial pinning: NULL = not pinned, non-NULL = pinned and the row
+  // floats to the top of any feed, newest-pin-first.
+  // Migration: supabase/migrations/0005_story_pinning.sql
+  pinnedAt: timestamp("pinned_at", { mode: "string", withTimezone: true }),
 });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export type InsertStory = z.infer<typeof insertStorySchema>;
@@ -483,3 +487,80 @@ export const storyDeletions = pgTable(
 
 export type StoryDeletion = typeof storyDeletions.$inferSelect;
 export type InsertStoryDeletion = typeof storyDeletions.$inferInsert;
+
+// ============================================================================
+// SPONSORS -- replaces the static client/src/lib/sponsors.ts. One row per
+// sponsor; per-city eligibility lives in sponsor_cities. sort_order on the
+// join row controls the round-robin order within a given city's feed.
+// Migration: supabase/migrations/0004_sponsors.sql
+// ============================================================================
+
+export const sponsors = pgTable("sponsors", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  logoUrl: text("logo_url").notNull(),
+  logoAlt: text("logo_alt").notNull().default(""),
+  address: text("address").notNull().default(""),
+  phone: text("phone").notNull().default(""),
+  tagline: text("tagline"),
+  href: text("href").notNull(),
+  instagram: text("instagram"),
+  facebook: text("facebook"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const sponsorCities = pgTable(
+  "sponsor_cities",
+  {
+    sponsorId: text("sponsor_id")
+      .notNull()
+      .references(() => sponsors.id, { onDelete: "cascade" }),
+    citySlug: text("city_slug").notNull(),
+    sortOrder: integer("sort_order").notNull().default(100),
+  },
+  (t) => ({
+    pk: uniqueIndex("sponsor_cities_pk").on(t.sponsorId, t.citySlug),
+    byCity: index("sponsor_cities_city_idx").on(t.citySlug, t.sortOrder),
+  }),
+);
+
+export type Sponsor = typeof sponsors.$inferSelect;
+export type InsertSponsor = typeof sponsors.$inferInsert;
+export type SponsorCity = typeof sponsorCities.$inferSelect;
+export type InsertSponsorCity = typeof sponsorCities.$inferInsert;
+
+// Shape returned by /api/sponsors -- a sponsor row plus its city eligibility
+// list, so the client doesn't need a second round-trip.
+export interface SponsorWithCities extends Sponsor {
+  cities: { citySlug: string; sortOrder: number }[];
+}
+
+// Zod for admin edit payload. All fields optional so a PATCH can update any
+// subset; cities is the FULL desired eligibility list (sets, not deltas).
+export const sponsorEditSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  logoUrl: z.string().min(1).max(500).optional(),
+  logoAlt: z.string().max(200).optional(),
+  address: z.string().max(300).optional(),
+  phone: z.string().max(50).optional(),
+  tagline: z.string().max(200).nullable().optional(),
+  href: z.string().url().max(2048).optional(),
+  instagram: z.string().url().max(2048).nullable().optional(),
+  facebook: z.string().url().max(2048).nullable().optional(),
+  isActive: z.boolean().optional(),
+  cities: z
+    .array(
+      z.object({
+        citySlug: z.string().min(1).max(50),
+        sortOrder: z.number().int().min(0).max(10_000),
+      }),
+    )
+    .optional(),
+});
+export type SponsorEditInput = z.infer<typeof sponsorEditSchema>;

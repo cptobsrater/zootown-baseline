@@ -33,6 +33,12 @@ interface Props {
   onClose: () => void;
   /** Called after a successful save/delete so the parent can refresh. */
   onChange: () => void;
+  /**
+   * Optional: scroll a specific block into view on open. "event" jumps the
+   * dialog to the calendar / starts_at section so the admin doesn't have to
+   * hunt for it when the entry point is the event-time quick action.
+   */
+  initialFocus?: "event";
 }
 
 const DESK_LIST: DeskId[] = [
@@ -98,7 +104,7 @@ function parseTags(raw: string | null | undefined): string[] {
  *   - Delete (DELETE /api/admin/stories/:id, prompt-confirmed)
  *   - Save (PATCH /api/admin/stories/:id with only changed fields)
  */
-export function StoryEditDialog({ story, open, onClose, onChange }: Props) {
+export function StoryEditDialog({ story, open, onClose, onChange, initialFocus }: Props) {
   const { cities } = useAdminCity();
   // Local form state: a draft copy of the story that the user edits.
   const [headline, setHeadline] = useState("");
@@ -353,7 +359,18 @@ export function StoryEditDialog({ story, open, onClose, onChange }: Props) {
           </div>
 
           {/* Calendar block */}
-          <div className="rounded-md border border-border/60 bg-card/30 p-3">
+          <div
+            ref={(el) => {
+              // When the dialog is opened with initialFocus="event", scroll
+              // this calendar block into view so the admin lands on the
+              // event-time fields immediately.
+              if (el && open && initialFocus === "event") {
+                // RAF to ensure layout has settled (Dialog mounts async).
+                requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "center" }));
+              }
+            }}
+            className="rounded-md border border-border/60 bg-card/30 p-3"
+          >
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
