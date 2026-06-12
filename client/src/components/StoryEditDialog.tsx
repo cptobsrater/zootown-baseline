@@ -4,7 +4,28 @@ import { apiRequest } from "@/lib/queryClient";
 import { useAdminCity } from "@/lib/admin-city-context";
 import { DESK_META, type DeskId } from "@/lib/format";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Trash2, Save, AlertTriangle, ExternalLink } from "lucide-react";
+import { Trash2, Save, AlertTriangle, ExternalLink, X } from "lucide-react";
+
+/**
+ * Deletion reason categories. Must stay in lockstep with STORY_DELETION_REASONS
+ * in shared/schema.ts and the Zod enum in server/routes.ts. These double as
+ * training-signal labels: when the AI ingest mispicks a story, the human's
+ * category here tells us what the model got wrong.
+ */
+const DELETION_REASONS: { value: string; label: string; hint: string }[] = [
+  { value: "wrong_city", label: "Wrong city", hint: "Article isn't about this Montana city" },
+  { value: "non_english", label: "Non-English", hint: "English-only rule" },
+  { value: "duplicate", label: "Duplicate", hint: "Same story already published" },
+  { value: "spam", label: "Spam / promo", hint: "Pure ad or SEO spam" },
+  { value: "low_quality", label: "Low quality", hint: "Thin or unreadable" },
+  { value: "wrong_desk", label: "Wrong desk", hint: "Miscategorized" },
+  { value: "wrong_event_data", label: "Bad event data", hint: "Time/place wrong or unconfirmed" },
+  { value: "outdated", label: "Outdated", hint: "Stale; no longer relevant" },
+  { value: "opinion_or_editorial", label: "Opinion/editorial", hint: "Not news" },
+  { value: "job_posting", label: "Job posting", hint: "Recruiting content" },
+  { value: "classified", label: "Classified", hint: "For-sale / personals" },
+  { value: "other", label: "Other", hint: "Explain in the box below" },
+];
 
 interface Props {
   story: Story | null;
@@ -96,6 +117,10 @@ export function StoryEditDialog({ story, open, onClose, onChange }: Props) {
   const [location, setLocation] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Reasoned-delete UI state
+  const [showDeleteForm, setShowDeleteForm] = useState(false);
+  const [deleteCategory, setDeleteCategory] = useState<string>("");
+  const [deleteReason, setDeleteReason] = useState("");
 
   // Reload form when a new story is selected.
   useEffect(() => {
@@ -115,6 +140,9 @@ export function StoryEditDialog({ story, open, onClose, onChange }: Props) {
     setTagsInput(parseTags(story.tags).join(", "));
     setLocation(story.location ?? "");
     setError(null);
+    setShowDeleteForm(false);
+    setDeleteCategory("");
+    setDeleteReason("");
   }, [story?.id]);
 
   if (!story) return null;
@@ -171,12 +199,24 @@ export function StoryEditDialog({ story, open, onClose, onChange }: Props) {
   }
 
   async function destroy() {
-    if (!confirm(`Permanently delete "${story!.headline.slice(0, 60)}"?\n\nThis can't be undone. If you just want to hide it, change Mod State to "rejected" instead.`)) return;
+    // Server requires both a category and a non-empty reason. Bail early if
+    // either is missing so we don't even attempt the round-trip.
+    const trimmedReason = deleteReason.trim();
+    if (!deleteCategory || trimmedReason.length < 3) {
+      setError("Pick a category and write a short reason (3+ chars) before deleting.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      const res = await apiRequest("DELETE", `/api/admin/stories/${story!.id}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await apiRequest("DELETE", `/api/admin/stories/${story!.id}`, {
+        reason: trimmedReason,
+        reasonCategory: deleteCategory,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
       onChange();
       onClose();
     } catch (e: any) {
@@ -408,16 +448,82 @@ export function StoryEditDialog({ story, open, onClose, onChange }: Props) {
           </div>
         </div>
 
+        {/* Reasoned-delete panel — every deletion is a labeled training signal.
+            Choose a category, write a short reason, then Confirm. */}
+        {showDeleteForm && (
+          <div className="mt-5 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="font-mono text-[0.62rem] uppercase tracking-[0.16em] text-destructive">
+                Why are you deleting this story?
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteForm(false);
+                  setDeleteCategory("");
+                  setDeleteReason("");
+                  setError(null);
+                }}
+                className="inline-flex items-center gap-1 text-[0.65rem] text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3 w-3" /> Cancel
+              </button>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-1.5">
+              {DELETION_REASONS.map((r) => {
+                const active = deleteCategory === r.value;
+                return (
+                  <button
+                    type="button"
+                    key={r.value}
+                    onClick={() => setDeleteCategory(r.value)}
+                    title={r.hint}
+                    className={
+                      "rounded-full border px-2.5 py-1 text-[0.7rem] transition " +
+                      (active
+                        ? "border-destructive bg-destructive text-destructive-foreground"
+                        : "border-border bg-background text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    {r.label}
+                  </button>
+                );
+              })}
+            </div>
+            <label className="mb-1 block font-mono text-[0.62rem] uppercase tracking-[0.16em] text-muted-foreground">
+              Detail (this trains the AI on what to filter)
+            </label>
+            <textarea
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              rows={2}
+              placeholder="e.g. Story is about Helena, not Missoula — geo classifier picked the wrong city."
+              className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm"
+            />
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={destroy}
+                disabled={saving || !deleteCategory || deleteReason.trim().length < 3}
+                className="inline-flex items-center gap-1.5 rounded-md bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {saving ? "Deleting…" : "Confirm deletion"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Footer */}
         <div className="mt-5 flex items-center justify-between gap-2 border-t border-border/60 pt-4">
           <button
             type="button"
-            onClick={destroy}
+            onClick={() => setShowDeleteForm((v) => !v)}
             disabled={saving}
             className="inline-flex items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive hover:bg-destructive/15 disabled:opacity-50"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Delete permanently
+            {showDeleteForm ? "Hide delete form" : "Delete permanently…"}
           </button>
           <div className="flex items-center gap-2">
             <button

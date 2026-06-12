@@ -250,18 +250,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(updated);
   });
 
+  // ----- Delete a story with a REQUIRED reason (training signal) -----
+  // Body must include a reason_category (one of the documented enums) AND
+  // a free-text reason of at least 4 chars. The deletion is recorded in
+  // the story_deletions table BEFORE the row is dropped so we never lose
+  // the teaching signal -- see storage.recordAndDeleteStory().
   app.delete("/api/admin/stories/:id", requireAdmin, async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const { STORY_DELETION_REASONS } = await import("../shared/schema.js");
+    const deleteSchema = z.object({
+      reason: z.string().trim().min(4, "Please add a short explanation (4+ chars)").max(2000),
+      reasonCategory: z.enum(STORY_DELETION_REASONS),
+    });
+    const parsed = deleteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "A reason and category are required when deleting a story.",
+        details: parsed.error.flatten(),
+      });
+    }
     const before = await storage.getStory(id);
     if (!before) return res.status(404).json({ error: "Not found" });
-    const ok = await storage.deleteStory(id);
-    if (!ok) return res.status(404).json({ error: "Not found" });
+    const adminId = ((req as any).adminId as string | undefined) ?? null;
+    const event = await storage.recordAndDeleteStory(id, {
+      reason: parsed.data.reason,
+      reasonCategory: parsed.data.reasonCategory,
+      adminId,
+    });
+    if (!event) return res.status(404).json({ error: "Not found" });
+    // Keep the legacy edit-log row so the audit panel stays consistent,
+    // and bump source trust down since the admin is signaling this source
+    // produced something worth removing.
     await storage.logEdit({
       storyId: id,
       field: "deleted",
       beforeValue: before.headline,
-      afterValue: null,
+      afterValue: `${parsed.data.reasonCategory}: ${parsed.data.reason}`,
       sourceName: before.sourceName,
       editedAt: new Date().toISOString(),
     });
@@ -269,7 +294,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const src = (await storage.listSources()).find((s) => s.name === before.sourceName);
       if (src) await storage.bumpSourceTrust(src.id, -4);
     } catch {}
-    res.json({ ok: true });
+    res.json({ ok: true, deletion: event });
+  });
+
+  // List deletion history -- aggregated training corpus for future tuning.
+  app.get("/api/admin/story-deletions", requireAdmin, async (req, res) => {
+    const { STORY_DELETION_REASONS } = await import("../shared/schema.js");
+    const catRaw = (req.query.category as string | undefined) ?? "";
+    const category = (STORY_DELETION_REASONS as readonly string[]).includes(catRaw)
+      ? (catRaw as any)
+      : undefined;
+    const sinceDays = Math.min(Number(req.query.sinceDays ?? 90), 365);
+    const limit = Math.min(Number(req.query.limit ?? 100), 500);
+    res.json({ items: await storage.listStoryDeletions({ category, sinceDays, limit }) });
   });
 
   // ----- Classification rules CRUD -----

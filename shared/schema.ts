@@ -431,3 +431,55 @@ export const submitFeedbackSchema = z.object({
   pageUrl: z.string().trim().max(800).optional().or(z.literal("")),
 });
 export type SubmitFeedback = z.infer<typeof submitFeedbackSchema>;
+
+// ============================================================================
+// Phase 8: Reasoned story deletions
+//
+// Each cockpit delete writes one row here BEFORE the story is dropped, so we
+// retain a permanent training signal even after the story itself is gone.
+// reasonCategory is the AI-feedback key; reason is the free-text detail.
+// ============================================================================
+
+export const STORY_DELETION_REASONS = [
+  "wrong_city",
+  "non_english",
+  "duplicate",
+  "spam",
+  "low_quality",
+  "wrong_desk",
+  "wrong_event_data",
+  "outdated",
+  "opinion_or_editorial",
+  "job_posting",
+  "classified",
+  "other",
+] as const;
+export type StoryDeletionReason = (typeof STORY_DELETION_REASONS)[number];
+
+export const storyDeletions = pgTable(
+  "story_deletions",
+  {
+    id: serial("id").primaryKey(),
+    storyId: integer("story_id").notNull(),
+    headline: text("headline").notNull(),
+    summary: text("summary"),
+    desk: text("desk"),
+    cityId: integer("city_id"),
+    sourceName: text("source_name"),
+    sourceUrl: text("source_url"),
+    modState: text("mod_state"),
+    publishedAt: timestamp("published_at", { mode: "string", withTimezone: true }),
+    reason: text("reason").notNull(),
+    reasonCategory: text("reason_category").$type<StoryDeletionReason>().notNull(),
+    adminId: text("admin_id"),
+    deletedAt: timestamp("deleted_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    byCategory: index("story_deletions_category_idx").on(t.reasonCategory, t.deletedAt),
+    bySource: index("story_deletions_source_idx").on(t.sourceName, t.deletedAt),
+    byDesk: index("story_deletions_desk_idx").on(t.desk, t.deletedAt),
+  }),
+);
+
+export type StoryDeletion = typeof storyDeletions.$inferSelect;
+export type InsertStoryDeletion = typeof storyDeletions.$inferInsert;

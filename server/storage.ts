@@ -10,6 +10,7 @@ import {
   historyStories, classificationRules, meta, cities,
   feedPresets, feedPresetEvents,
   feedback,
+  storyDeletions,
   buildFilterSignature,
 } from "../shared/schema.js";
 import type {
@@ -39,6 +40,9 @@ import type {
   Feedback,
   InsertFeedback,
   FeedbackStatus,
+  StoryDeletion,
+  InsertStoryDeletion,
+  StoryDeletionReason,
 } from "../shared/schema.js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -430,6 +434,17 @@ export interface IStorage {
     id: number,
     fields: Partial<Pick<Feedback, "status" | "adminNote">>,
   ): Promise<Feedback | undefined>;
+
+  // ----- Phase 8: reasoned story deletion -----
+  recordAndDeleteStory(
+    storyId: number,
+    ctx: { reason: string; reasonCategory: StoryDeletionReason; adminId?: string | null },
+  ): Promise<StoryDeletion | undefined>;
+  listStoryDeletions(opts?: {
+    category?: StoryDeletionReason;
+    sinceDays?: number;
+    limit?: number;
+  }): Promise<StoryDeletion[]>;
 }
 
 // ------ DatabaseStorage implementation ------
@@ -1473,6 +1488,64 @@ export class DatabaseStorage implements IStorage {
     }
     const rows = await db.update(feedback).set(set).where(eq(feedback.id, id)).returning();
     return rows[0] as Feedback | undefined;
+  }
+
+  // ============================================================================
+  // Phase 8: reasoned story deletion + deletion history
+  // ============================================================================
+
+  // Single-transaction-ish snapshot + delete. We don't wrap in a Postgres
+  // transaction because the storage layer uses postgres-js's default mode
+  // (no explicit transaction object) and the consequence of a half-failure
+  // here is "deletion row exists but story still present" -- recoverable
+  // and easy to spot via the admin UI. The opposite order (delete first,
+  // then log) would lose the data we want to capture, so we always log first.
+  async recordAndDeleteStory(
+    storyId: number,
+    ctx: { reason: string; reasonCategory: StoryDeletionReason; adminId?: string | null },
+  ): Promise<StoryDeletion | undefined> {
+    const story = await this.getStory(storyId);
+    if (!story) return undefined;
+    const inserted = await db
+      .insert(storyDeletions)
+      .values({
+        storyId: story.id,
+        headline: story.headline,
+        summary: story.summary,
+        desk: story.desk,
+        cityId: story.cityId ?? null,
+        sourceName: story.sourceName,
+        sourceUrl: story.sourceUrl,
+        modState: story.modState,
+        publishedAt: story.publishedAt,
+        reason: ctx.reason,
+        reasonCategory: ctx.reasonCategory as any,
+        adminId: ctx.adminId ?? null,
+      } as any)
+      .returning();
+    // Now drop the story (cascade-deletes its sources via the existing helper).
+    await this.deleteStory(storyId);
+    return inserted[0] as StoryDeletion;
+  }
+
+  async listStoryDeletions(opts: {
+    category?: StoryDeletionReason;
+    sinceDays?: number;
+    limit?: number;
+  } = {}): Promise<StoryDeletion[]> {
+    const conds: any[] = [];
+    if (opts.category) conds.push(eq(storyDeletions.reasonCategory, opts.category as any));
+    if (opts.sinceDays && opts.sinceDays > 0) {
+      conds.push(sql`${storyDeletions.deletedAt} >= now() - (${opts.sinceDays} || ' days')::interval`);
+    }
+    const where = conds.length ? and(...conds) : undefined;
+    const rows = await db
+      .select()
+      .from(storyDeletions)
+      .where(where as any)
+      .orderBy(desc(storyDeletions.deletedAt))
+      .limit(opts.limit ?? 200);
+    return rows as StoryDeletion[];
   }
 }
 
