@@ -525,10 +525,14 @@ export function isLikelyNonEnglish(title: string, summary?: string | null): bool
     "médiation", "colloque", "atelier", "conférence", "formation continue",
     "étranger", "démarche", "professionnels formés",
     // Spanish / Catalan
-    "capacitación", "certificación", "encuentro", "sesión", "sessió",
-    "comunitarios", "diálogo",
+    "gratuito", "seminario", "capacitación", "certificación",
+    "encuentro", "sesión", "sessió", "conoce todo", "comunitarios",
+    "diálogo", "escuelas de", "estudiar en", "la visa", "fragíl",
+    "validar ideas",
     // Portuguese
     "vivências", "vínculos", "família", "criatividade", "gestão",
+    // German
+    "einführung", "kostenlos",
   ];
   for (const marker of NON_ENGLISH_MARKERS) {
     if (lower.includes(marker)) return true;

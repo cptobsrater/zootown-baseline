@@ -147,6 +147,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ----- Admin: edit / delete stories -----
+  // Full point-and-click editor schema for the cockpit's StoryEditDialog.
+  // Every field is optional so the client can PATCH any subset of fields.
   const editStorySchema = z.object({
     headline: z.string().min(2).max(400).optional(),
     summary: z.string().min(2).max(20000).optional(),
@@ -157,6 +159,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     venue: z.string().max(200).nullable().optional(),
     startsAt: z.string().max(40).nullable().optional(),
     endsAt: z.string().max(40).nullable().optional(),
+    // Extended fields wired by the cockpit:
+    modState: z.enum(["draft", "approved", "rejected"]).optional(),
+    cityId: z.number().int().positive().optional(),
+    publishedAt: z.string().min(8).max(40).optional(),
+    tags: z.string().max(1000).optional(),
+    location: z.string().max(200).nullable().optional(),
+    isReviewed: z.boolean().optional(),
   });
 
   // ----- Admin: mark story as reviewed (admin sign-off / training signal) -----
@@ -219,7 +228,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const updated = await storage.updateStoryFields(id, parsed.data);
     if (!updated) return res.status(404).json({ error: "Not found" });
     const editedAt = new Date().toISOString();
-    for (const key of ["headline", "summary", "desk", "sourceUrl", "sourceName", "onCalendar", "venue", "startsAt", "endsAt"] as const) {
+    for (const key of [
+      "headline", "summary", "desk", "sourceUrl", "sourceName",
+      "onCalendar", "venue", "startsAt", "endsAt",
+      // Extended fields from the cockpit editor:
+      "modState", "cityId", "publishedAt", "tags", "location", "isReviewed",
+    ] as const) {
       const beforeVal = (before as any)[key] ?? null;
       const afterVal = (parsed.data as any)[key];
       if (afterVal !== undefined && afterVal !== beforeVal) {

@@ -826,7 +826,26 @@ export class DatabaseStorage implements IStorage {
   // ----- Story edit/delete + log -----
   async updateStoryFields(
     id: number,
-    fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt" | "onCalendar">>,
+    fields: Partial<
+      Pick<
+        Story,
+        | "headline"
+        | "summary"
+        | "desk"
+        | "sourceUrl"
+        | "sourceName"
+        | "venue"
+        | "startsAt"
+        | "endsAt"
+        | "onCalendar"
+        | "modState"
+        | "cityId"
+        | "publishedAt"
+        | "tags"
+        | "location"
+        | "isReviewed"
+      >
+    >,
   ): Promise<Story | undefined> {
     const set: Record<string, any> = {};
     if (fields.headline !== undefined) set.headline = fields.headline;
@@ -838,6 +857,20 @@ export class DatabaseStorage implements IStorage {
     if (fields.startsAt !== undefined) set.startsAt = fields.startsAt;
     if (fields.endsAt !== undefined) set.endsAt = fields.endsAt;
     if (fields.onCalendar !== undefined) set.onCalendar = fields.onCalendar;
+    // ----- Extended editable fields wired by the cockpit's StoryEditDialog -----
+    if (fields.modState !== undefined) set.modState = fields.modState;
+    if (fields.cityId !== undefined) set.cityId = fields.cityId;
+    if (fields.publishedAt !== undefined) set.publishedAt = fields.publishedAt;
+    if (fields.tags !== undefined) set.tags = fields.tags;
+    if (fields.location !== undefined) set.location = fields.location;
+    if (fields.isReviewed !== undefined) {
+      set.isReviewed = fields.isReviewed;
+      // When an admin flips reviewed=true, stamp the timestamp so the
+      // edit-log / training-signal pipeline can pick it up.
+      if (fields.isReviewed) {
+        set.reviewedAt = new Date().toISOString();
+      }
+    }
     if (Object.keys(set).length === 0) return this.getStory(id);
     await db.update(stories).set(set).where(eq(stories.id, id));
     return this.getStory(id);

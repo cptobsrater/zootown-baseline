@@ -20,6 +20,8 @@ import { Link } from "wouter";
 import { apiRequest, getAdminToken } from "@/lib/queryClient";
 import { AdminCityProvider, useAdminCity } from "@/lib/admin-city-context";
 import { DESK_META, type DeskId } from "@/lib/format";
+import { StoryEditDialog } from "@/components/StoryEditDialog";
+import { Pencil } from "lucide-react";
 import type { Story } from "@shared/schema";
 
 // ---- Types mirroring the server payloads ----
@@ -229,6 +231,8 @@ function CockpitInner() {
   const [presetName, setPresetName] = useState("");
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // When non-null, a story is open in the editor dialog.
+  const [editing, setEditing] = useState<Story | null>(null);
 
   // Load presets + signatures whenever the admin's city changes.
   useEffect(() => {
@@ -669,9 +673,12 @@ function CockpitInner() {
               </p>
             )}
             {preview.items.map((s) => (
-              <div
+              <button
                 key={s.id}
-                className="rounded-md border border-border/40 bg-card/40 p-2 text-xs"
+                type="button"
+                onClick={() => setEditing(s)}
+                className="group block w-full cursor-pointer rounded-md border border-border/40 bg-card/40 p-2 text-left text-xs transition-colors hover:border-primary/40 hover:bg-card/70"
+                title="Click to edit this story"
               >
                 <div className="flex items-center gap-2">
                   <span
@@ -693,6 +700,12 @@ function CockpitInner() {
                       {s.modState}
                     </span>
                   )}
+                  {s.onCalendar && (
+                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[0.55rem] font-medium uppercase tracking-[0.1em] text-emerald-500">
+                      event
+                    </span>
+                  )}
+                  <Pencil className="ml-auto h-3 w-3 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                 </div>
                 <h3 className="mt-1 font-medium leading-tight text-foreground">
                   {s.headline}
@@ -700,11 +713,21 @@ function CockpitInner() {
                 <p className="mt-1 line-clamp-2 text-[0.7rem] text-muted-foreground">
                   {s.summary}
                 </p>
-              </div>
+              </button>
             ))}
           </div>
         </aside>
       </main>
+
+      {/* Point-and-click story editor. Floats above all three panes;
+          refreshes the preview on save/delete by toggling the config
+          reference so the existing debounced preview effect re-fires. */}
+      <StoryEditDialog
+        story={editing}
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        onChange={() => setConfig((c) => ({ ...c }))}
+      />
     </div>
   );
 }
