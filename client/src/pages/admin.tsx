@@ -148,9 +148,14 @@ function AdminInner() {
             <AdminCitySwitcher />
           </div>
           <div className="flex items-center gap-2">
+            <Link href="/admin/cockpit-live" data-testid="link-cockpit-live">
+              <a className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100">
+                Live cockpit →
+              </a>
+            </Link>
             <Link href="/admin/cockpit" data-testid="link-cockpit">
               <a className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate">
-                Cockpit →
+                Classic →
               </a>
             </Link>
             <div className="inline-flex items-center gap-2 rounded-full border border-destructive/30 bg-destructive/10 px-2.5 py-1 font-mono text-[0.62rem] uppercase tracking-[0.18em] text-destructive">

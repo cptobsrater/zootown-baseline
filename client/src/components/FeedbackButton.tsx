@@ -15,8 +15,10 @@ import { MessageSquare } from "lucide-react";
 export function FeedbackButton() {
   const [location, navigate] = useLocation();
   // Suppress on the feedback page itself + any admin route (admins use the
-  // cockpit's "Feedback" panel, not this button).
+  // cockpit's "Feedback" panel, not this button). Also suppress when this
+  // page is embedded inside the cockpit's live-preview iframe (?embed=1).
   if (location === "/feedback" || location.startsWith("/admin")) return null;
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("embed") === "1") return null;
 
   function go() {
     const from = typeof window !== "undefined" ? window.location.pathname + window.location.search : location;

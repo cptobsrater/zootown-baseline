@@ -12,6 +12,7 @@ import Landing from "@/pages/landing";
 import Home from "@/pages/home";
 import AdminPage from "@/pages/admin";
 import CockpitPage from "@/pages/cockpit";
+import CockpitLivePage from "@/pages/cockpit-live";
 import CalendarPage from "@/pages/calendar";
 import JobsPage from "@/pages/jobs";
 import FeedbackPage from "@/pages/feedback";
@@ -27,6 +28,7 @@ function AppRouter() {
       {/* Phase 6 editorial cockpit — saved feed presets, live preview, etc.
           Must come BEFORE the bare /admin route so wouter matches it first. */}
       <Route path="/admin/cockpit" component={CockpitPage} />
+      <Route path="/admin/cockpit-live" component={CockpitLivePage} />
       {/* Admin is not city-scoped at the URL level (admin uses an in-page city switcher) */}
       <Route path="/admin" component={AdminPage} />
 

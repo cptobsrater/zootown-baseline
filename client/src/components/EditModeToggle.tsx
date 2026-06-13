@@ -24,8 +24,12 @@ export function EditModeToggle() {
   const { isAdmin, isEditing, toggleEditing } = useEditMode();
 
   // Gate: only show when logged in, never on /feedback or /admin/*.
+  // Also hide when running inside the cockpit's live-preview iframe -- the
+  // parent cockpit already provides edit-mode chrome.
   if (!isAdmin) return null;
   if (location === "/feedback" || location.startsWith("/admin")) return null;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("embed") === "1") return null;
 
   return (
     <button

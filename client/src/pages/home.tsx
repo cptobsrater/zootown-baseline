@@ -27,6 +27,11 @@ import { StoryQuickActions } from "@/components/StoryQuickActions";
 import { StoryCreateDialog } from "@/components/StoryCreateDialog";
 import { useEditMode } from "@/lib/edit-mode";
 import { Plus } from "lucide-react";
+import {
+  useEmbedMode,
+  postSelectStoryToParent,
+  postSelectSponsorToParent,
+} from "@/lib/embed-mode";
 
 interface StoriesPage {
   items: Story[];
@@ -150,6 +155,11 @@ export default function Home() {
   // Toggle for the "+ Add story" dialog.
   const [createOpen, setCreateOpen] = useState(false);
   const { isEditing } = useEditMode();
+  // Embed mode: running inside the cockpit's live-preview iframe.
+  // The hook installs a postMessage listener so the parent cockpit can
+  // invalidate caches after a save. We don't read the boolean directly --
+  // postSelectStoryToParent() / postSelectSponsorToParent() check the URL.
+  useEmbedMode();
   // Warm the sponsor cache for the active city. The legacy synchronous
   // sponsorsForCity()/pickSponsorForSlot() helpers read from this cache.
   useCitySponsors(citySlug);
@@ -542,6 +552,9 @@ export default function Home() {
                       or handlers. */}
                   <Editable
                     onEdit={() => {
+                      // In embed mode, hand the selection to the parent
+                      // cockpit instead of opening a local dialog.
+                      if (postSelectStoryToParent(s)) return;
                       setEditingStoryFocus(undefined);
                       setEditingStory(s);
                     }}
@@ -550,13 +563,24 @@ export default function Home() {
                       <StoryQuickActions
                         story={s}
                         onEditEventTime={() => {
+                          if (postSelectStoryToParent(s)) return;
                           setEditingStoryFocus("event");
                           setEditingStory(s);
                         }}
                       />
                     }
                   >
-                    <StoryCard story={s} onOpen={setSelected} />
+                    <StoryCard
+                      story={s}
+                      onOpen={(story) => {
+                        // When embedded AND in edit mode, route clicks on the
+                        // card itself to the parent inspector too. Outside
+                        // edit mode (e.g. an admin previewing without editing)
+                        // fall through to the normal drawer.
+                        if (isEditing && postSelectStoryToParent(story)) return;
+                        setSelected(story);
+                      }}
+                    />
                   </Editable>
                   {/* Sponsor banner rule (lib/sponsors.ts): attach a banner to
                       the bottom of the 2nd post (idx=1), then every 3rd post
@@ -575,7 +599,10 @@ export default function Home() {
                       if (!sponsor) return null;
                       return (
                         <Editable
-                          onEdit={() => setEditingSponsorId(sponsor.id)}
+                          onEdit={() => {
+                            if (postSelectSponsorToParent(sponsor.id)) return;
+                            setEditingSponsorId(sponsor.id);
+                          }}
                           label="Edit sponsor"
                         >
                           <SponsorBanner sponsor={sponsor} />
