@@ -530,6 +530,95 @@ export const sponsorCities = pgTable(
   }),
 );
 
+// ============================================================================
+// LEARNING RULES (Phase 9) -- the "AI learns from your edits" loop.
+// Migration: supabase/migrations/0006_learning_rules.sql
+//
+// proposed_rules: drafts surfaced by the pattern scan. Each row carries the
+//   evidence that produced it (hit_count, example story IDs) so an admin can
+//   audit before approving.
+// live_rules: approved rules ingest actually consults via shouldSkipItem().
+// ============================================================================
+
+/** Match dimensions a rule can use. */
+export const RULE_MATCH_TYPES = [
+  "source_name",      // exact match on Source.name
+  "source_domain",    // eTLD+1 of Source.url
+  "url_regex",        // regex on item.url
+  "title_keyword",    // case-insensitive substring in item.title
+  "title_regex",      // regex on item.title
+] as const;
+export type RuleMatchType = (typeof RULE_MATCH_TYPES)[number];
+
+/** The same 12 reason codes used for reasoned-delete; mirrored as the
+ *  category a rule represents. We re-export the array name so callers
+ *  don't have to remember which list to import. */
+export const RULE_CATEGORIES = STORY_DELETION_REASONS;
+export type RuleCategory = StoryDeletionReason;
+
+export const PROPOSED_RULE_STATUSES = [
+  "pending",
+  "approved",
+  "rejected",
+  "auto_promoted",
+] as const;
+export type ProposedRuleStatus = (typeof PROPOSED_RULE_STATUSES)[number];
+
+export const proposedRules = pgTable("proposed_rules", {
+  id: serial("id").primaryKey(),
+  matchType: text("match_type").$type<RuleMatchType>().notNull(),
+  matchValue: text("match_value").notNull(),
+  category: text("category").$type<RuleCategory>().notNull(),
+  cityId: integer("city_id"),
+  hitCount: integer("hit_count").notNull().default(0),
+  contradictionCount: integer("contradiction_count").notNull().default(0),
+  evidenceWindowDays: integer("evidence_window_days").notNull().default(14),
+  exampleStoryIds: integer("example_story_ids").array().notNull().default(sql`ARRAY[]::integer[]`),
+  status: text("status").$type<ProposedRuleStatus>().notNull().default("pending"),
+  reviewer: text("reviewer"),
+  reviewedAt: timestamp("reviewed_at", { mode: "string", withTimezone: true }),
+  reviewerNote: text("reviewer_note"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const liveRules = pgTable("live_rules", {
+  id: serial("id").primaryKey(),
+  matchType: text("match_type").$type<RuleMatchType>().notNull(),
+  matchValue: text("match_value").notNull(),
+  category: text("category").$type<RuleCategory>().notNull(),
+  cityId: integer("city_id"),
+  source: text("source").notNull().default("admin_approved"),
+  // Stored as BIGINT in PG but read as a JS number; rule hit counts will
+  // never get anywhere near Number.MAX_SAFE_INTEGER.
+  hitsLifetime: integer("hits_lifetime").notNull().default(0),
+  lastHitAt: timestamp("last_hit_at", { mode: "string", withTimezone: true }),
+  isActive: boolean("is_active").notNull().default(true),
+  proposedRuleId: integer("proposed_rule_id"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type ProposedRule = typeof proposedRules.$inferSelect;
+export type InsertProposedRule = typeof proposedRules.$inferInsert;
+export type LiveRule = typeof liveRules.$inferSelect;
+export type InsertLiveRule = typeof liveRules.$inferInsert;
+
+/** Zod for the admin approve/reject payload. */
+export const proposedRuleReviewSchema = z.object({
+  action: z.enum(["approve", "reject"]),
+  reviewerNote: z.string().max(500).optional(),
+});
+export type ProposedRuleReviewInput = z.infer<typeof proposedRuleReviewSchema>;
+
 export type Sponsor = typeof sponsors.$inferSelect;
 export type InsertSponsor = typeof sponsors.$inferInsert;
 export type SponsorCity = typeof sponsorCities.$inferSelect;

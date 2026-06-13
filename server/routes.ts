@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "node:http";
-import { storage } from "./storage.js";
+import { storage, db } from "./storage.js";
+import { eq, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { ingestAll, ingestSource } from "./ingest/ingester.js";
 import { rssFetcher } from "./ingest/rss.js";
@@ -497,6 +498,113 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     if (!ok) return res.status(404).json({ error: "Not found" });
     const { invalidateRuleCache } = await import("./ingest/rules.js");
     invalidateRuleCache();
+    res.json({ ok: true });
+  });
+
+  // ===== Phase 9: Learning rules (AI loop) =====
+  // Proposed and live rules surfaced by the pattern scan over story_deletions.
+  // The scan can be triggered manually here; later it runs from a Cloudflare
+  // Worker on cron. See server/learning/rule-scan.ts for the algorithm.
+  app.post("/api/admin/scan-rules", requireAdmin, async (req, res) => {
+    const schema = z.object({ windowDays: z.number().int().min(1).max(90).optional() });
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const { runRuleScan } = await import("./learning/rule-scan.js");
+    const { refreshLiveRules } = await import("./learning/live-rules-cache.js");
+    const result = await runRuleScan({
+      windowDays: parsed.data.windowDays ?? 14,
+      reviewer: (req as any).adminId ?? "admin",
+    });
+    // If anything auto-promoted, refresh the ingest cache immediately so
+    // the next ingest tick honors the new live_rule without waiting.
+    if (result.autoPromoted > 0) {
+      await refreshLiveRules();
+    }
+    res.json(result);
+  });
+
+  app.get("/api/admin/rules-queue", requireAdmin, async (req, res) => {
+    const statusFilter = (req.query.status as string | undefined) ?? "pending";
+    const { proposedRules, liveRules } = await import("../shared/schema.js");
+    // Two parallel queries: pending/auto-recent proposals + active live rules.
+    const [proposed, live] = await Promise.all([
+      db
+        .select()
+        .from(proposedRules)
+        .where(
+          statusFilter === "all"
+            ? (sql`TRUE` as any)
+            : (eq(proposedRules.status, statusFilter as any) as any),
+        )
+        .orderBy(desc(proposedRules.createdAt))
+        .limit(200),
+      db
+        .select()
+        .from(liveRules)
+        .where(eq(liveRules.isActive, true))
+        .orderBy(desc(liveRules.createdAt))
+        .limit(200),
+    ]);
+    res.json({ proposed, live });
+  });
+
+  // Approve / reject a single proposed rule. Approve copies the proposal
+  // into live_rules; reject just marks the proposal status.
+  app.post("/api/admin/rules-queue/:id/review", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const { proposedRuleReviewSchema, proposedRules, liveRules } = await import(
+      "../shared/schema.js"
+    );
+    const parsed = proposedRuleReviewSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const [row] = await db.select().from(proposedRules).where(eq(proposedRules.id, id));
+    if (!row) return res.status(404).json({ error: "Not found" });
+    if (row.status !== "pending") {
+      return res.status(409).json({ error: "already_reviewed", status: row.status });
+    }
+    const now = new Date().toISOString();
+    const adminId = (req as any).adminId ?? "admin";
+
+    if (parsed.data.action === "approve") {
+      await db.insert(liveRules).values({
+        matchType: row.matchType,
+        matchValue: row.matchValue,
+        category: row.category,
+        cityId: row.cityId,
+        source: "admin_approved",
+        proposedRuleId: row.id,
+        isActive: true,
+      });
+    }
+    await db
+      .update(proposedRules)
+      .set({
+        status: (parsed.data.action === "approve" ? "approved" : "rejected") as any,
+        reviewer: adminId,
+        reviewedAt: now,
+        reviewerNote: parsed.data.reviewerNote ?? null,
+        updatedAt: now,
+      })
+      .where(eq(proposedRules.id, id));
+
+    // Refresh the ingest cache so the next item benefits immediately.
+    const { refreshLiveRules } = await import("./learning/live-rules-cache.js");
+    await refreshLiveRules();
+    res.json({ ok: true });
+  });
+
+  // Soft-disable a live rule (keeps the row for audit trail).
+  app.delete("/api/admin/live-rules/:id", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const { liveRules } = await import("../shared/schema.js");
+    await db
+      .update(liveRules)
+      .set({ isActive: false, updatedAt: new Date().toISOString() })
+      .where(eq(liveRules.id, id));
+    const { refreshLiveRules } = await import("./learning/live-rules-cache.js");
+    await refreshLiveRules();
     res.json({ ok: true });
   });
 

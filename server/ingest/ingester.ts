@@ -4,6 +4,7 @@ import { rssFetcher } from "./rss.js";
 import { htmlFetcher } from "./html.js";
 import { headlessFetcher } from "./headless.js";
 import { canonicalizeUrl, toInsertStory, shouldSkipItem } from "./normalize.js";
+import { matchRules } from "../learning/live-rules-cache.js";
 import { applyClassificationRules, bumpHitCounts } from "./rules.js";
 import type { FetchResult } from "./types.js";
 
@@ -167,6 +168,20 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
       // missing summary on news sources, items older than 14 days.
       const skip = shouldSkipItem(item, source);
       if (skip) {
+        duplicates++;
+        continue;
+      }
+
+      // Apply the learned-rules cache. live_rules is the table the cockpit's
+      // proposed_rules promote into, plus auto-promoted entries from the
+      // pattern scan. A match here means "a prior admin signal said items
+      // matching this rule shouldn't be ingested" so we drop the item.
+      const learnedSkip = await matchRules({
+        sourceName: source.name,
+        sourceUrl: source.url ?? null,
+        title: item.title,
+      });
+      if (learnedSkip) {
         duplicates++;
         continue;
       }

@@ -153,6 +153,11 @@ function AdminInner() {
                 Live cockpit →
               </a>
             </Link>
+            <Link href="/admin/rules-queue" data-testid="link-rules-queue">
+              <a className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate">
+                Learning rules →
+              </a>
+            </Link>
             <Link href="/admin/cockpit" data-testid="link-cockpit">
               <a className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate">
                 Classic →
