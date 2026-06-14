@@ -91,6 +91,7 @@ export interface RetireReport {
   rerouted: number;
   left_alone: number;
   failures: number;
+  failure_samples: string[];
   by_target: Record<string, number>;
   samples: Array<{ id: number; from: string; to: string; confidence: number; reason: string; headline: string }>;
 }
@@ -111,6 +112,7 @@ export async function retireHealthDesk(opts: { limit?: number; dryRun?: boolean 
     rerouted: 0,
     left_alone: 0,
     failures: 0,
+    failure_samples: [],
     by_target: { city: 0, business: 0, people: 0, health: 0 },
     samples: [],
   };
@@ -120,8 +122,11 @@ export async function retireHealthDesk(opts: { limit?: number; dryRun?: boolean 
     let cls: ReclassifyResult;
     try {
       cls = await classifyOne(row.headline, row.summary ?? "", row.source_name);
-    } catch (err) {
+    } catch (err: any) {
       report.failures++;
+      if (report.failure_samples.length < 3) {
+        report.failure_samples.push(String(err?.message ?? err).slice(0, 300));
+      }
       continue;
     }
 
