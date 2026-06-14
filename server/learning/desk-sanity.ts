@@ -29,7 +29,7 @@ import { db } from "../storage.js";
 // resolves to a 2.x flash variant.
 const GEMINI_MODEL = "gemini-flash-latest";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 6;
 const CONFIDENCE_THRESHOLD = 0.75;
 const SAMPLE_AGE_HOURS = 72;
 
@@ -108,7 +108,7 @@ async function callGemini(stories: InputStory[]): Promise<GeminiVerdict[]> {
     contents: [{ role: "user", parts: [{ text: userText }] }],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 4096,
       responseMimeType: "application/json",
     },
   };
@@ -125,11 +125,17 @@ async function callGemini(stories: InputStory[]): Promise<GeminiVerdict[]> {
   const data = (await res.json()) as any;
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) throw new Error("Gemini returned no text");
+  // Strip optional markdown code fences. The newer flash models sometimes
+  // wrap responses in ```json ... ``` even when responseMimeType is set.
+  const cleaned = text
+    .replace(/^\s*```(?:json)?\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
   let parsed: any;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(cleaned);
   } catch {
-    throw new Error(`Gemini returned non-JSON: ${text.slice(0, 200)}`);
+    throw new Error(`Gemini returned non-JSON: ${cleaned.slice(0, 200)}`);
   }
   const verdicts = parsed?.verdicts;
   if (!Array.isArray(verdicts)) throw new Error("Gemini response missing verdicts array");
