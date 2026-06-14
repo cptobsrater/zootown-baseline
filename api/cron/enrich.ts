@@ -25,7 +25,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // Classifier limit is higher for initial backfill; steady-state runs
     // will only touch the handful of new rows from the latest ingest tick.
-    out.classifier = await reclassifyRecent({ ageHours: 30 * 24, limit: 1500 });
+    out.classifier = await reclassifyRecent({ ageHours: 30 * 24, limit: 500 });
   } catch (err: any) {
     out.errors.push(`classifier: ${err?.message ?? err}`);
   }
