@@ -43,7 +43,7 @@ export const HS_SCHOOL_SEEDS: SchoolSeed[] = [
 
   // ---- Helena (6) ----
   { cityId: 6, schoolName: "Helena Bengals", shortName: "Helena", citySlug: "helena", schoolSlug: "helena-bengals" },
-  { cityId: 6, schoolName: "Helena Capital Bruins", shortName: "Capital", citySlug: "helena", schoolSlug: "helena-capital-bruins" },
+  { cityId: 6, schoolName: "Helena Capital Bruins", shortName: "Capital", citySlug: "helena", schoolSlug: "capital-bruins" },
 
   // ---- Kalispell (7) ----
   { cityId: 7, schoolName: "Flathead Braves", shortName: "Flathead", citySlug: "kalispell", schoolSlug: "flathead-braves-bravettes" },
