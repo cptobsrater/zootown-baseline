@@ -194,13 +194,14 @@ function _rowToEventFromStory(r: any): EventItem {
     desk: r.desk,
     description: r.summary ?? null,
     cityId: r.city_id ?? r.cityId ?? null,
-    // Story-backed calendar items don't carry Phase 14 link fields.
-    primaryLink: null,
-    linkType: null,
-    fbUrl: null,
-    venueUrl: null,
-    sourceConfidence: 1,
-    linkVerifiedAt: null,
+    // Phase 14: stories now carries the link fields too. Read from
+    // both snake_case (raw SQL paths) and camelCase (Drizzle paths).
+    primaryLink: r.primary_link ?? r.primaryLink ?? null,
+    linkType: r.link_type ?? r.linkType ?? null,
+    fbUrl: r.fb_url ?? r.fbUrl ?? null,
+    venueUrl: r.venue_url ?? r.venueUrl ?? null,
+    sourceConfidence: r.source_confidence ?? r.sourceConfidence ?? 1,
+    linkVerifiedAt: r.link_verified_at ?? r.linkVerifiedAt ?? null,
   };
 }
 function rowToEvent(r: any): EventItem {
@@ -711,7 +712,7 @@ export class DatabaseStorage implements IStorage {
     // for calendar-category sources, but the desk can be overridden per source).
     const now = new Date().toISOString();
     const targetDesk = input.desk && typeof input.desk === "string" ? input.desk : "entertainment";
-    const storyRow = {
+    const storyRow: any = {
       headline: input.title,
       summary: input.description ?? input.title,
       desk: targetDesk,
@@ -736,6 +737,15 @@ export class DatabaseStorage implements IStorage {
       isReviewed: false,
       reviewedAt: null,
       cityId: (input as any).cityId ?? null,
+      // Phase 14 link fields. Only present on rows produced by the curated
+      // venue collector -- legacy ingest sources omit them and they default
+      // to null / 1.
+      primaryLink: (input as any).primaryLink ?? null,
+      linkType: (input as any).linkType ?? null,
+      fbUrl: (input as any).fbUrl ?? null,
+      venueUrl: (input as any).venueUrl ?? null,
+      sourceConfidence: (input as any).sourceConfidence ?? 1,
+      linkVerifiedAt: (input as any).linkVerifiedAt ?? null,
     };
     const rows = await db.insert(stories).values(storyRow).returning();
     return rowToEventFromStory(rows[0]);

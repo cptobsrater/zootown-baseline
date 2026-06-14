@@ -106,6 +106,16 @@ export const stories = pgTable("stories", {
   // When the story originated from a cluster, this links back so we can
   // show the audit trail in the cockpit.
   clusterId: integer("cluster_id"),
+  // Phase 14 calendar link fields. When the row is a calendar event
+  // (on_calendar=true) produced by the venue collector, primaryLink is
+  // the link the public CTA navigates to (Etix purchase page > venue
+  // detail page > Facebook event), and linkType picks the button label.
+  primaryLink: text("primary_link"),
+  linkType: text("link_type").$type<"ticket" | "details" | "facebook">(),
+  fbUrl: text("fb_url"),
+  venueUrl: text("venue_url"),
+  sourceConfidence: integer("source_confidence").notNull().default(1),
+  linkVerifiedAt: text("link_verified_at"),
 });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export type InsertStory = z.infer<typeof insertStorySchema>;
