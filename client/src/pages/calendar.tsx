@@ -683,16 +683,32 @@ export default function CalendarPage() {
               <span className="text-xs text-muted-foreground">
                 Listed by {selectedEvent.sourceName}
               </span>
-              <a
-                href={selectedEvent.sourceUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover-elevate active-elevate-2"
-                data-testid="link-event-source"
-              >
-                View source
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
+              {(() => {
+                // Phase 14: primaryLink + linkType drive the CTA. ticket -> "Tickets",
+                // details -> "Details", facebook -> "Facebook event", fallback to the
+                // legacy sourceUrl -> "View source" for older calendar rows.
+                const href = selectedEvent.primaryLink ?? selectedEvent.sourceUrl;
+                const label =
+                  selectedEvent.linkType === "ticket"
+                    ? "Tickets"
+                    : selectedEvent.linkType === "details"
+                      ? "Details"
+                      : selectedEvent.linkType === "facebook"
+                        ? "Facebook event"
+                        : "View source";
+                return (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover-elevate active-elevate-2"
+                    data-testid="link-event-source"
+                  >
+                    {label}
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                );
+              })()}
             </div>
           </div>
         </div>

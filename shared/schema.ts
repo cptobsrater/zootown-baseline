@@ -111,6 +111,13 @@ export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export type InsertStory = z.infer<typeof insertStorySchema>;
 export type Story = typeof stories.$inferSelect;
 
+// Phase 14 link-type vocabulary. Drives the public calendar's CTA label:
+//   ticket   -> "Tickets" (purchase intent — Etix, AXS, See Tickets, etc.)
+//   details  -> "Details" (venue's own event detail page; free events, info)
+//   facebook -> "Facebook event" (last resort when nothing else exists)
+export const EVENT_LINK_TYPES = ["ticket", "details", "facebook"] as const;
+export type EventLinkType = (typeof EVENT_LINK_TYPES)[number];
+
 export const events = pgTable("events", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
@@ -123,6 +130,18 @@ export const events = pgTable("events", {
   desk: text("desk"),
   description: text("description"),
   cityId: integer("city_id").references(() => cities.id),
+  // Phase 14: where the public "more info" link points. Falls back to
+  // sourceUrl when null so old rows keep working.
+  primaryLink: text("primary_link"),
+  linkType: text("link_type").$type<EventLinkType>(),
+  fbUrl: text("fb_url"),
+  venueUrl: text("venue_url"),
+  // Confidence = how many independent sources agreed on this event.
+  // 1 = single source (default), 2 = website + FB agree, 3+ would imply
+  // a future third source (e.g. RSS feed + JSON-LD + FB cross-confirm).
+  sourceConfidence: integer("source_confidence").notNull().default(1),
+  // When we last HEAD-verified the ticket link was alive.
+  linkVerifiedAt: text("link_verified_at"),
 });
 export const insertEventSchema = createInsertSchema(events).omit({ id: true });
 export type InsertEvent = z.infer<typeof insertEventSchema>;

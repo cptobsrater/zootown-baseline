@@ -194,6 +194,13 @@ function _rowToEventFromStory(r: any): EventItem {
     desk: r.desk,
     description: r.summary ?? null,
     cityId: r.city_id ?? r.cityId ?? null,
+    // Story-backed calendar items don't carry Phase 14 link fields.
+    primaryLink: null,
+    linkType: null,
+    fbUrl: null,
+    venueUrl: null,
+    sourceConfidence: 1,
+    linkVerifiedAt: null,
   };
 }
 function rowToEvent(r: any): EventItem {
@@ -209,6 +216,13 @@ function rowToEvent(r: any): EventItem {
     desk: r.desk ?? null,
     description: r.description ?? null,
     cityId: r.city_id ?? r.cityId ?? null,
+    // Phase 14 link fields. snake_case from raw SQL, camelCase from Drizzle.
+    primaryLink: r.primary_link ?? r.primaryLink ?? null,
+    linkType: r.link_type ?? r.linkType ?? null,
+    fbUrl: r.fb_url ?? r.fbUrl ?? null,
+    venueUrl: r.venue_url ?? r.venueUrl ?? null,
+    sourceConfidence: r.source_confidence ?? r.sourceConfidence ?? 1,
+    linkVerifiedAt: r.link_verified_at ?? r.linkVerifiedAt ?? null,
   };
 }
 

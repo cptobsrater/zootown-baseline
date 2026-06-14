@@ -341,7 +341,7 @@ export function MobileCalendarSheet({ open, onOpenChange }: Props) {
           {selectedDayEvents.map((e) => (
             <li key={e.id}>
               <a
-                href={e.sourceUrl}
+                href={e.primaryLink ?? e.sourceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid={`mobile-cal-agenda-${e.id}`}
