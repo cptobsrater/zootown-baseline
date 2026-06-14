@@ -72,11 +72,11 @@ export function registerExportRoutes(app: Express) {
       `)) as unknown as any[];
 
       const audits = (await db.execute(sql`
-        SELECT id, kind, severity, status, fingerprint, summary, evidence,
-               subject_story_ids, opened_at, resolved_at, resolution_note
+        SELECT id, kind, severity, status, title, detail, subject_story_ids,
+               suggested_action, fingerprint, created_at, dismissed_at, fixed_at
         FROM editorial_audits
-        ${since ? sql` WHERE opened_at >= ${since}` : sql``}
-        ORDER BY opened_at ASC
+        ${since ? sql` WHERE created_at >= ${since}` : sql``}
+        ORDER BY created_at ASC
       `)) as unknown as any[];
 
       const signalAggregates = (await db.execute(sql`
