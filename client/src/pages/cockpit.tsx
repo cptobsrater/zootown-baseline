@@ -21,7 +21,7 @@
  *   - Settings hidden by default. Most days the admin should never have
  *     to open it.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -46,6 +46,7 @@ import {
   Eye, ThumbsUp, ThumbsDown, Flag, Share2, AlertTriangle,
   Search, Settings as SettingsIcon, X, MessageSquare, Pencil,
   EyeOff, ExternalLink, LogOut, ChevronRight, Calendar, ArrowLeft,
+  FileText, Check, ChevronLeft,
 } from "lucide-react";
 
 // --- Types ---
@@ -416,8 +417,10 @@ function CockpitFeed({
 
 // --- One story card ---
 
+type CardPanel = "none" | "chat" | "drafts";
+
 function CockpitStoryCard({ item }: { item: CockpitItem }) {
-  const [chatOpen, setChatOpen] = useState(false);
+  const [panel, setPanel] = useState<CardPanel>("none");
   const desk = item.desk as DeskId;
   const isUpcomingEvent = !!(item.on_calendar && item.starts_at);
 
@@ -530,10 +533,10 @@ function CockpitStoryCard({ item }: { item: CockpitItem }) {
         </a>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => setChatOpen((o) => !o)}
+            onClick={() => setPanel((p) => (p === "chat" ? "none" : "chat"))}
             data-testid={`chat-toggle-${item.id}`}
             className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors ${
-              chatOpen
+              panel === "chat"
                 ? "border-foreground/30 bg-foreground/10"
                 : "border-card-border bg-card hover-elevate text-muted-foreground"
             }`}
@@ -541,6 +544,19 @@ function CockpitStoryCard({ item }: { item: CockpitItem }) {
           >
             <MessageSquare className="h-3 w-3" />
             chat
+          </button>
+          <button
+            onClick={() => setPanel((p) => (p === "drafts" ? "none" : "drafts"))}
+            data-testid={`drafts-toggle-${item.id}`}
+            className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors ${
+              panel === "drafts"
+                ? "border-foreground/30 bg-foreground/10"
+                : "border-card-border bg-card hover-elevate text-muted-foreground"
+            }`}
+            title="View draft history"
+          >
+            <FileText className="h-3 w-3" />
+            drafts
           </button>
           <button
             onClick={() => alert("Edit modal coming in the next pass.")}
@@ -565,7 +581,14 @@ function CockpitStoryCard({ item }: { item: CockpitItem }) {
         </div>
       </div>
 
-      {chatOpen && <ChatThread storyId={item.id} cityHint={item.city_id} />}
+      {panel === "chat" && (
+        <ChatThread
+          storyId={item.id}
+          cityHint={item.city_id}
+          onDraftCreated={() => setPanel("drafts")}
+        />
+      )}
+      {panel === "drafts" && <DraftsPanel storyId={item.id} />}
     </article>
   );
 }
@@ -620,7 +643,15 @@ interface ConversationTurn {
   createdAt: string;
 }
 
-function ChatThread({ storyId, cityHint }: { storyId: number; cityHint: number | null }) {
+function ChatThread({
+  storyId,
+  cityHint,
+  onDraftCreated,
+}: {
+  storyId: number;
+  cityHint: number | null;
+  onDraftCreated?: () => void;
+}) {
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -656,6 +687,11 @@ function ChatThread({ storyId, cityHint }: { storyId: number; cityHint: number |
       // Cockpit feed may have changed (desk reroute, hidden story).
       queryClient.invalidateQueries({ queryKey: ["cockpit-feed"] });
       queryClient.invalidateQueries({ queryKey: ["cockpit-summary"] });
+      // If Gemini produced a new draft, refresh the drafts panel and pop it open.
+      if (body?.newDraft) {
+        queryClient.invalidateQueries({ queryKey: ["story-drafts", storyId] });
+        onDraftCreated?.();
+      }
     } catch (e: any) {
       setError(String(e?.message ?? e));
     } finally {
@@ -722,8 +758,9 @@ function ChatThread({ storyId, cityHint }: { storyId: number; cityHint: number |
       </div>
       {error && <div className="text-[0.7rem] text-red-500">{error}</div>}
       <p className="text-[0.65rem] text-muted-foreground/70">
-        ⌘/Ctrl+Enter to send. The AI applies desk reroutes and source-trust
-        nudges immediately; other signals accumulate for future passes.
+        Cmd/Ctrl+Enter to send. Ask for changes ("tighten the headline",
+        "too breathless, try again") and a new draft pops into the Drafts tab.
+        Type "approved" or click Approve in Drafts to publish.
       </p>
     </div>
   );
@@ -759,6 +796,188 @@ function ChatTurn({ turn }: { turn: ConversationTurn }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+
+// Phase 27: drafts panel. Horizontal slider of versions. The most recent
+// approved version is the "live" one; everything else is history.
+interface StoryDraftRow {
+  id: number;
+  storyId: number;
+  version: number;
+  headline: string;
+  summary: string | null;
+  whyItMatters: string | null;
+  desk: string | null;
+  tags: string[] | null;
+  sourceOfChange: string;
+  conversationTurnId: number | null;
+  status: "draft" | "approved" | "superseded";
+  createdAt: string;
+  approvedAt: string | null;
+}
+
+function DraftsPanel({ storyId }: { storyId: number }) {
+  const { data, refetch } = useQuery<{ drafts: StoryDraftRow[] }>({
+    queryKey: ["story-drafts", storyId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/stories/${storyId}/drafts`);
+      return res.json();
+    },
+  });
+
+  const drafts = data?.drafts ?? [];
+  const [selected, setSelected] = useState<number | null>(null);
+
+  // Default selection: latest draft, or latest approved if no draft pending.
+  const effective = useMemo(() => {
+    if (selected != null) return selected;
+    if (drafts.length === 0) return null;
+    const pending = [...drafts].reverse().find((d) => d.status === "draft");
+    return (pending ?? drafts[drafts.length - 1]).version;
+  }, [selected, drafts]);
+
+  const approve = useMutation({
+    mutationFn: async (version: number) => {
+      const res = await apiRequest(
+        "POST",
+        `/api/admin/stories/${storyId}/drafts/${version}/approve`,
+      );
+      return res.json();
+    },
+    onSuccess: () => {
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["cockpit-feed"] });
+      queryClient.invalidateQueries({ queryKey: ["cockpit-summary"] });
+    },
+  });
+
+  if (drafts.length === 0) {
+    return (
+      <div className="mt-3 border-t border-border/50 pt-3 text-xs text-muted-foreground">
+        No drafts yet. Open the chat tab and ask the AI for changes.
+      </div>
+    );
+  }
+
+  const current = drafts.find((d) => d.version === effective) ?? drafts[drafts.length - 1];
+  const idx = drafts.findIndex((d) => d.version === current.version);
+  const canPrev = idx > 0;
+  const canNext = idx < drafts.length - 1;
+
+  return (
+    <div className="mt-3 border-t border-border/50 pt-3 space-y-2">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <FileText className="h-3 w-3" />
+        <span className="font-mono text-[0.6rem] uppercase tracking-[0.18em]">
+          Drafts
+        </span>
+        <span className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted-foreground/70">
+          {drafts.length} version{drafts.length === 1 ? "" : "s"}
+        </span>
+      </div>
+
+      {/* version slider */}
+      <div className="flex items-center gap-1 overflow-x-auto pb-1">
+        <button
+          onClick={() => canPrev && setSelected(drafts[idx - 1].version)}
+          disabled={!canPrev}
+          className="shrink-0 rounded-md border border-card-border bg-card p-1 text-muted-foreground hover-elevate disabled:opacity-30"
+          title="Previous version"
+        >
+          <ChevronLeft className="h-3 w-3" />
+        </button>
+        <div className="flex items-center gap-1 min-w-0">
+          {drafts.map((d) => {
+            const isCurrent = d.version === current.version;
+            const tone =
+              d.status === "approved"
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600"
+                : d.status === "draft"
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-600"
+                  : "border-card-border bg-card text-muted-foreground";
+            return (
+              <button
+                key={d.version}
+                onClick={() => setSelected(d.version)}
+                className={`shrink-0 rounded-md border px-2 py-1 text-[0.65rem] font-mono uppercase tracking-[0.14em] transition-colors ${tone} ${
+                  isCurrent ? "ring-1 ring-foreground/40" : ""
+                }`}
+                data-testid={`draft-chip-${storyId}-v${d.version}`}
+                title={`${d.status} • ${absoluteDate(d.createdAt)}`}
+              >
+                v{d.version}
+                {d.status === "approved" && " ✓"}
+                {d.status === "draft" && " •"}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          onClick={() => canNext && setSelected(drafts[idx + 1].version)}
+          disabled={!canNext}
+          className="shrink-0 rounded-md border border-card-border bg-card p-1 text-muted-foreground hover-elevate disabled:opacity-30"
+          title="Next version"
+        >
+          <ChevronRight className="h-3 w-3" />
+        </button>
+      </div>
+
+      {/* selected version body */}
+      <div className="rounded-md border border-card-border bg-secondary/20 p-3 space-y-2">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <div className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted-foreground mb-1">
+              v{current.version} •{" "}
+              {current.status === "approved"
+                ? "live"
+                : current.status === "draft"
+                  ? "proposed"
+                  : "superseded"}{" "}
+              • {current.sourceOfChange} • {absoluteDate(current.createdAt)}
+            </div>
+            <div className="text-sm font-semibold leading-snug">{current.headline}</div>
+          </div>
+          {current.status === "draft" && (
+            <button
+              onClick={() => approve.mutate(current.version)}
+              disabled={approve.isPending}
+              data-testid={`approve-draft-${storyId}-v${current.version}`}
+              className="shrink-0 inline-flex items-center gap-1 rounded-md bg-emerald-600 text-white px-3 py-1.5 text-xs font-semibold hover-elevate disabled:opacity-50"
+              title="Publish this draft as the live story"
+            >
+              <Check className="h-3 w-3" />
+              {approve.isPending ? "publishing..." : "approve & publish"}
+            </button>
+          )}
+        </div>
+        {current.summary && (
+          <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-wrap">
+            {current.summary}
+          </p>
+        )}
+        {current.whyItMatters && (
+          <div className="rounded-md bg-card/60 border border-card-border/60 p-2">
+            <div className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted-foreground mb-0.5">
+              Why it matters
+            </div>
+            <p className="text-xs text-foreground/85 leading-relaxed">{current.whyItMatters}</p>
+          </div>
+        )}
+        {current.desk && (
+          <div className="text-[0.65rem] font-mono uppercase tracking-[0.14em] text-muted-foreground">
+            desk: {current.desk}
+          </div>
+        )}
+      </div>
+
+      {approve.isError && (
+        <div className="text-[0.7rem] text-red-500">
+          Couldn't approve: {String((approve.error as any)?.message ?? approve.error)}
+        </div>
+      )}
     </div>
   );
 }

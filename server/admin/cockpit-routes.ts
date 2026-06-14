@@ -10,7 +10,10 @@
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "../storage.js";
-import { sendAdminMessage, listConversation } from "../learning/conversation-service.js";
+import {
+  sendAdminMessage, listConversation,
+  listDrafts, approveDraft,
+} from "../learning/conversation-service.js";
 
 interface AttentionRow {
   reports: number;
@@ -61,6 +64,33 @@ export function registerCockpitRoutes(app: Express, requireAdmin: any) {
         storyId: id, message, adminId, citySlug,
       });
       res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  // ----- Phase 27: draft revisions -----
+  // GET /api/admin/stories/:id/drafts                 - list all draft versions
+  // POST /api/admin/stories/:id/drafts/:version/approve - approve a version
+  app.get("/api/admin/stories/:id/drafts", requireAdmin, async (req: any, res: any) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid id" });
+    try {
+      const drafts = await listDrafts(id);
+      res.json({ drafts });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  app.post("/api/admin/stories/:id/drafts/:version/approve", requireAdmin, async (req: any, res: any) => {
+    const id = Number(req.params.id);
+    const version = Number(req.params.version);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid id" });
+    if (!Number.isFinite(version) || version <= 0) return res.status(400).json({ error: "invalid version" });
+    try {
+      const approved = await approveDraft(id, version);
+      res.json({ approved });
     } catch (err: any) {
       res.status(500).json({ error: String(err?.message ?? err) });
     }

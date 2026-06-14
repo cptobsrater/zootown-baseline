@@ -1215,3 +1215,24 @@ export const learnedSignals = pgTable("learned_signals", {
 });
 export type LearnedSignal = typeof learnedSignals.$inferSelect;
 export type InsertLearnedSignal = typeof learnedSignals.$inferInsert;
+
+export const DRAFT_STATUSES = ["draft", "approved", "superseded"] as const;
+export const DRAFT_SOURCES = ["snapshot", "ai", "human"] as const;
+
+export const storyDrafts = pgTable("story_drafts", {
+  id: serial("id").primaryKey(),
+  storyId: integer("story_id").notNull().references(() => stories.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  headline: text("headline").notNull(),
+  summary: text("summary"),
+  whyItMatters: text("why_it_matters"),
+  desk: text("desk"),
+  tags: text("tags").array(),
+  sourceOfChange: text("source_of_change").$type<(typeof DRAFT_SOURCES)[number]>().notNull().default("ai"),
+  conversationTurnId: integer("conversation_turn_id"),
+  status: text("status").$type<(typeof DRAFT_STATUSES)[number]>().notNull().default("draft"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  approvedAt: timestamp("approved_at", { mode: "string", withTimezone: true }),
+});
+export type StoryDraft = typeof storyDrafts.$inferSelect;
+export type InsertStoryDraft = typeof storyDrafts.$inferInsert;
