@@ -2,6 +2,7 @@ import type { Express } from "express";
 import type { Server } from "node:http";
 import { storage, db } from "./storage.js";
 import { eq, desc, sql } from "drizzle-orm";
+import { xUnmapped, xAuthors, xListCursor } from "../shared/schema.js";
 import { z } from "zod";
 import { ingestAll, ingestSource } from "./ingest/ingester.js";
 import { rssFetcher } from "./ingest/rss.js";
@@ -606,6 +607,103 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     const { refreshLiveRules } = await import("./learning/live-rules-cache.js");
     await refreshLiveRules();
     res.json({ ok: true });
+  });
+
+  // ===== Phase 10: X (Twitter) ingest — unmapped-author queue + stats =====
+  // The X fetcher writes any tweet author we don't already know about into
+  // x_unmapped. The cockpit shows them with sample text so the admin can
+  // assign a city in one click. Once assigned, future tweets from that
+  // author route correctly; past tweets are not retro-updated (kept simple).
+  app.get("/api/admin/x-unmapped", requireAdmin, async (_req, res) => {
+    const rows = await db
+      .select()
+      .from(xUnmapped)
+      .orderBy(desc(xUnmapped.lastSeen))
+      .limit(200);
+    res.json({ items: rows });
+  });
+
+  // Promote an unmapped author into x_authors. Body: { cityId|null, outletName?, isMuted? }.
+  app.post("/api/admin/x-unmapped/:authorId/assign", requireAdmin, async (req, res) => {
+    const authorId = String(req.params.authorId);
+    const schema = z.object({
+      cityId: z.number().int().positive().nullable(),
+      outletName: z.string().max(120).optional(),
+      isMuted: z.boolean().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const um = await db.select().from(xUnmapped).where(eq(xUnmapped.authorId, authorId));
+    if (!um[0]) return res.status(404).json({ error: "unknown_author" });
+    const row = um[0];
+    await db
+      .insert(xAuthors)
+      .values({
+        authorId: row.authorId,
+        username: row.username,
+        displayName: row.displayName,
+        cityId: parsed.data.cityId,
+        outletName: parsed.data.outletName ?? null,
+        isMuted: parsed.data.isMuted ?? false,
+      })
+      .onConflictDoUpdate({
+        target: xAuthors.authorId,
+        set: {
+          cityId: parsed.data.cityId,
+          outletName: parsed.data.outletName ?? null,
+          isMuted: parsed.data.isMuted ?? false,
+          updatedAt: new Date().toISOString(),
+        } as any,
+      });
+    await db.delete(xUnmapped).where(eq(xUnmapped.authorId, authorId));
+    res.json({ ok: true });
+  });
+
+  // Reject an unmapped author entirely — marks them muted in x_authors so
+  // future tweets get dropped on sight.
+  app.post("/api/admin/x-unmapped/:authorId/mute", requireAdmin, async (req, res) => {
+    const authorId = String(req.params.authorId);
+    const um = await db.select().from(xUnmapped).where(eq(xUnmapped.authorId, authorId));
+    if (!um[0]) return res.status(404).json({ error: "unknown_author" });
+    const row = um[0];
+    await db
+      .insert(xAuthors)
+      .values({
+        authorId: row.authorId,
+        username: row.username,
+        displayName: row.displayName,
+        cityId: null,
+        isMuted: true,
+      })
+      .onConflictDoUpdate({
+        target: xAuthors.authorId,
+        set: { isMuted: true, updatedAt: new Date().toISOString() } as any,
+      });
+    await db.delete(xUnmapped).where(eq(xUnmapped.authorId, authorId));
+    res.json({ ok: true });
+  });
+
+  // X ingest stats (quota usage, last poll, recent errors)
+  app.get("/api/admin/x-stats", requireAdmin, async (_req, res) => {
+    const cursorRows = await db.select().from(xListCursor).limit(1);
+    const cursor = cursorRows[0] ?? null;
+    const tweetsRes = (await db.execute(
+      sql`SELECT COUNT(*)::int as count FROM x_tweets`,
+    )) as unknown as { count: number }[];
+    const authorsRes = (await db.execute(
+      sql`SELECT COUNT(*)::int as count FROM x_authors WHERE is_muted = false`,
+    )) as unknown as { count: number }[];
+    const unmappedRes = (await db.execute(
+      sql`SELECT COUNT(*)::int as count FROM x_unmapped`,
+    )) as unknown as { count: number }[];
+    res.json({
+      cursor,
+      counts: {
+        tweetsTotal: tweetsRes[0]?.count ?? 0,
+        authorsTotal: authorsRes[0]?.count ?? 0,
+        unmappedTotal: unmappedRes[0]?.count ?? 0,
+      },
+    });
   });
 
   // ===== Phase 6: Editorial cockpit (feed presets) =====

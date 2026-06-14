@@ -5,6 +5,8 @@ import { htmlFetcher } from "./html.js";
 import { headlessFetcher } from "./headless.js";
 import { canonicalizeUrl, toInsertStory, shouldSkipItem } from "./normalize.js";
 import { matchRules } from "../learning/live-rules-cache.js";
+import { pollXList } from "./x-fetcher.js";
+import { processXSignals } from "./x-signal-processor.js";
 import { applyClassificationRules, bumpHitCounts } from "./rules.js";
 import type { FetchResult } from "./types.js";
 
@@ -322,6 +324,74 @@ async function tick() {
     } catch {
       // swallow — run log already captures per-source errors
     }
+  }
+  // X (Twitter) ingest runs on its own cadence inside the same tick loop so
+  // we don't spin up a second timer. tickXIfDue() reads its own last-polled-at
+  // from x_list_cursor and decides whether to fire. See server/ingest/x-fetcher.ts.
+  try {
+    await tickXIfDue();
+  } catch (err) {
+    console.error("[ingest] tickXIfDue failed:", err);
+  }
+}
+
+/**
+ * Decide whether to poll X this tick. Adaptive cadence:
+ *   - 15 minutes during 07:00-23:00 America/Denver (your local time)
+ *   - 60 minutes overnight (23:00-07:00)
+ *
+ * Reads last_polled_at directly from x_list_cursor so the cadence persists
+ * across server restarts.
+ */
+async function tickXIfDue(): Promise<void> {
+  // Bail fast if the token isn't configured -- saves a DB roundtrip every tick
+  // before the env var lands.
+  if (!process.env.X_BEARER_TOKEN) return;
+
+  const { db } = await import("../storage.js");
+  const { xListCursor } = await import("../../shared/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const { MONTANA_LIST_ID } = await import("./x-fetcher.js");
+
+  const rows = await db
+    .select()
+    .from(xListCursor)
+    .where(eq(xListCursor.listId, MONTANA_LIST_ID));
+  const cursor = rows[0];
+  if (!cursor) return; // migration's INSERT should have created this; skip if missing
+
+  const last = cursor.lastPolledAt ? Date.parse(cursor.lastPolledAt) : 0;
+  const ageMin = (Date.now() - last) / 60000;
+
+  // Determine cadence by Mountain-Time hour. We use UTC for the comparison;
+  // Denver is UTC-6 (MDT) or UTC-7 (MST). 07:00 local -> 13:00 or 14:00 UTC.
+  // Close enough; cadence is approximate by design.
+  const utcHour = new Date().getUTCHours();
+  // Daytime in MT roughly = 13:00 - 06:00 UTC (i.e. 07:00 local - 23:00 local).
+  const isDaytime = utcHour >= 13 || utcHour < 6;
+  const cadenceMin = isDaytime ? 15 : 60;
+  if (ageMin < cadenceMin) return;
+
+  const result = await pollXList();
+  if (result.polled) {
+    console.log(
+      `[x] poll ok — fetched ${result.tweetsFetched} tweets, ${result.newAuthors} new authors, monthly usage ${result.monthlyUsage}`,
+    );
+    // Right after pulling new tweets, drain the signal processor so any
+    // article URLs from this batch become story candidates immediately.
+    // The processor is bounded (BATCH_SIZE=30) so we cap its time per tick.
+    try {
+      const sig = await processXSignals();
+      if (sig.processed > 0) {
+        console.log(
+          `[x] signals processed=${sig.processed} fetched=${sig.articlesFetched} failed=${sig.articlesFailed} signalsOnly=${sig.signalsOnly}`,
+        );
+      }
+    } catch (err) {
+      console.error("[x] signal processor failed:", err);
+    }
+  } else {
+    console.log(`[x] poll skipped: ${result.reason}`);
   }
 }
 

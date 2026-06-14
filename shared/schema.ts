@@ -619,6 +619,91 @@ export const proposedRuleReviewSchema = z.object({
 });
 export type ProposedRuleReviewInput = z.infer<typeof proposedRuleReviewSchema>;
 
+// ============================================================================
+// X (Twitter) API INGEST -- Phase 10
+//
+// Tweets from a curated Montana list are SIGNALS, not stories. The signal
+// processor reads x_tweets, fetches linked article URLs via the HTML
+// fetcher (which lands them in the stories table as source_type='x_referred'),
+// and the clustering job groups multiple signals into synthesizable
+// candidates.
+//
+// Migrations: 0007_x_ingest.sql, 0008_x_tweets.sql
+// ============================================================================
+
+export const xAuthors = pgTable("x_authors", {
+  authorId: text("author_id").primaryKey(),
+  username: text("username").notNull(),
+  displayName: text("display_name").notNull().default(""),
+  cityId: integer("city_id"),
+  outletName: text("outlet_name"),
+  isMuted: boolean("is_muted").notNull().default(false),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const xUnmapped = pgTable("x_unmapped", {
+  authorId: text("author_id").primaryKey(),
+  username: text("username").notNull(),
+  displayName: text("display_name").notNull().default(""),
+  lastTweetId: text("last_tweet_id"),
+  lastTweetText: text("last_tweet_text"),
+  seenCount: integer("seen_count").notNull().default(1),
+  firstSeen: timestamp("first_seen", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  lastSeen: timestamp("last_seen", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const xListCursor = pgTable("x_list_cursor", {
+  listId: text("list_id").primaryKey(),
+  lastTweetId: text("last_tweet_id"),
+  tweetsThisMonth: integer("tweets_this_month").notNull().default(0),
+  monthStartedAt: timestamp("month_started_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  lastPolledAt: timestamp("last_polled_at", { mode: "string", withTimezone: true }),
+  lastError: text("last_error"),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const xTweets = pgTable("x_tweets", {
+  tweetId: text("tweet_id").primaryKey(),
+  authorId: text("author_id").notNull(),
+  text: text("text").notNull(),
+  authorUsername: text("author_username").notNull(),
+  linkedUrl: text("linked_url"),
+  retweetCount: integer("retweet_count").notNull().default(0),
+  replyCount: integer("reply_count").notNull().default(0),
+  likeCount: integer("like_count").notNull().default(0),
+  quoteCount: integer("quote_count").notNull().default(0),
+  impressionCount: integer("impression_count").notNull().default(0),
+  cityId: integer("city_id"),
+  processed: boolean("processed").notNull().default(false),
+  resultedInStoryId: integer("resulted_in_story_id"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull(),
+  fetchedAt: timestamp("fetched_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type XAuthor = typeof xAuthors.$inferSelect;
+export type InsertXAuthor = typeof xAuthors.$inferInsert;
+export type XUnmapped = typeof xUnmapped.$inferSelect;
+export type InsertXUnmapped = typeof xUnmapped.$inferInsert;
+export type XListCursor = typeof xListCursor.$inferSelect;
+export type XTweet = typeof xTweets.$inferSelect;
+export type InsertXTweet = typeof xTweets.$inferInsert;
+
 export type Sponsor = typeof sponsors.$inferSelect;
 export type InsertSponsor = typeof sponsors.$inferInsert;
 export type SponsorCity = typeof sponsorCities.$inferSelect;
