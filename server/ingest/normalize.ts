@@ -71,6 +71,41 @@ function hasGeoSignal(text: string): boolean {
   return GEO_SIGNALS.some((g) => text.includes(g));
 }
 
+// Phase 23 P1: URL-path segments published by TownNews/BLOX (the CMS behind
+// most Montana Lee Enterprises papers) that reveal the AP wire category.
+// First match wins, so put more-specific paths first.
+const URL_PATH_DESK_MAP: Array<[string, Desk]> = [
+  // TownNews /ap_news/{category}/ paths (Bozeman Daily Chronicle, Montana
+  // Standard, Billings Gazette, Missoulian, Helena IR, Great Falls Tribune).
+  ["/ap_news/business/", "business"],
+  ["/ap_news/entertainment/", "entertainment"],
+  ["/ap_news/sports/", "sports"],
+  ["/ap_news/health/", "health"],
+  ["/ap_news/lifestyles/", "entertainment"],
+  ["/ap_news/politics/", "city"],    // federal politics: editorial = city
+  ["/ap_news/washington/", "city"],
+  ["/ap_news/world/", "city"],
+  // Local section paths used by the same papers' homegrown content.
+  ["/sports/", "sports"],
+  ["/business/", "business"],
+  ["/entertainment/", "entertainment"],
+  ["/obituaries/", "people"],
+  // KPAX and similar Scripps stations use /sports/, /weather/ section URLs.
+  ["/local-sports/", "sports"],
+];
+
+function deskFromUrlPath(url: string): Desk | null {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    for (const [needle, desk] of URL_PATH_DESK_MAP) {
+      if (path.includes(needle)) return desk;
+    }
+  } catch {
+    // malformed URL — fall through to keyword scoring
+  }
+  return null;
+}
+
 function looksLikeNationalWire(text: string): boolean {
   return NATIONAL_WIRE_MARKERS.some((m) => text.includes(m));
 }
@@ -113,6 +148,22 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
   }
   if (/\b(keila szpaller|steve daines profile|jon tester profile|greg gianforte profile|mike mansfield|ryan zinke profile)\b/.test(text)) return "people";
 
+  // Phase 23 P1: URL-path -> desk override.
+  //
+  // TownNews/BLOX-powered Montana newspapers (Bozeman Daily Chronicle,
+  // Montana Standard, Billings Gazette, Missoulian, Helena Independent
+  // Record, Great Falls Tribune) encode the AP wire category in the URL
+  // path (e.g. /ap_news/business/, /ap_news/entertainment/). The CMS is
+  // literally telling us the category for free; we shouldn't waste a
+  // Gemini call to re-discover it.
+  //
+  // The keyword classifier still runs after this for stories whose URL
+  // path doesn't match. Wire-marker rejection (shouldRejectAsNonLocal)
+  // still runs downstream, so a /washington/ story with no Montana tie
+  // gets dropped regardless of the desk we assign here.
+  const urlDeskOverride = deskFromUrlPath(item.url);
+  if (urlDeskOverride) return urlDeskOverride;
+
   // Build keyword scores
   const score: Partial<Record<Desk, number>> = {};
   const hit = (desk: Desk, kws: string[], weight = 1) => {
@@ -133,6 +184,18 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
     "blood drive", "organ donor", "telehealth", "medicare", "medicaid",
     "glp-1", "weight-loss drug", "obesity drug", "mrna", "alzheimer", "parkinson",
     "new treatment", "fda approval", "fda approves", "gene therapy",
+    // Phase 23 P4: research facilities + biological terms. The Rocky
+    // Mountain Labs (NIH facility in Hamilton, MT) pathogen-exposure
+    // story scored zero everywhere and defaulted to city. These keywords
+    // catch lab-incident, biosafety, and research news that's clearly
+    // health-domain even when worded without lay-person health vocab.
+    "rocky mountain labs", "rocky mountain laboratories", "rml hamilton",
+    "nih", "national institutes of health", "cdc", "centers for disease control",
+    "biocontainment", "bsl-3", "bsl-4", "biosafety", "select agent",
+    "pathogen", "pathogen exposure", "laboratory exposure", "laboratory incident",
+    "laboratory accident", "lab accident",
+    "virus", "bacteria", "tuberculosis", "ebola", "anthrax", "plague",
+    "infectious disease", "research lab", "epidemiologist", "epidemiology",
   ], 2);
 
   // People — narrow: only obituaries and stories explicitly about a specific
@@ -179,6 +242,28 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
     "economic development", "downtown business",
   ]);
 
+  // Phase 23 P3: History desk — anniversaries, retrospectives, historical
+  // markers. The original classifier never assigned `history` from the
+  // ingest path (it was reserved for the daily writer's curated pool),
+  // which dumped anniversary news on city. Now any story whose dominant
+  // signal is historical lands here.
+  //
+  // Weight 2 + Montana-geo gate downstream keeps national-history
+  // stories from polluting the desk.
+  hit("history", [
+    "anniversary of", "150th anniversary", "100th anniversary", "200th anniversary",
+    "50th anniversary", "75th anniversary",
+    "centennial", "bicentennial", "sesquicentennial",
+    "historical marker", "historic site", "historic landmark", "historic district",
+    "montana historical society", "mhs collection",
+    "battle of the little bighorn", "battle of", "treaty of", "hellgate treaty",
+    "lewis and clark", "corps of discovery",
+    "on this day", "this day in history", "decades ago", "a century ago",
+    "looking back at", "remembering when", "archival photo", "archival footage",
+    "crow nation", "salish kootenai", "blackfeet nation", "northern cheyenne",
+    "ghost town", "pioneer", "homesteader",
+  ], 2);
+
   // Sports — Griz, high school, recreation
   hit("sports", [
     "griz", "grizzlies", "montana grizzlies", "montana griz", "griz football", "griz basketball",
@@ -189,6 +274,26 @@ export function classifyDesk(item: RawItem, source: Source): Desk {
     "5k", "10k", "marathon", "triathlon", "missoula marathon", "trail run", "cycling race",
     "missoula maulers", "missoula paddleheads", "baseball", "softball", "volleyball",
     "hockey", "soccer match", "track meet", "cross country", "wrestling meet",
+  ], 2);
+
+  // Phase 23 P2: national pro/college sports markers. KPAX and Scripps
+  // stations republish AP sports stories; without these the headlines
+  // score zero and fall through to city. URL-path mapping already routes
+  // most of these via /sports/, but the keyword bucket is the safety net
+  // for sources whose URL doesn't include /sports/ in the path.
+  hit("sports", [
+    " nba ", " nfl ", " mlb ", " nhl ", " wnba ", " mls ", " pga ", " lpga ", " ufc ",
+    "nba finals", "nfl draft", "world series", "super bowl", "stanley cup", "masters tournament",
+    "finals masterpiece", "finals comeback", "finals lead", "finals game",
+    "epic comeback", "game-winning", "buzzer beater", "walk-off", "hat trick", "shutout",
+    "all-star game", "draft pick", "draft prospect", "free agent", "trade deadline",
+    "yankees", "red sox", "dodgers", "giants", "cubs", "mets", "phillies", "brewers",
+    "lakers", "celtics", "warriors", "knicks", "nuggets", "timberwolves", "thunder",
+    "patriots", "chiefs", "eagles", "49ers", "cowboys", "packers", "bills",
+    "manchester united", "barcelona", "real madrid", "liverpool fc",
+    // College football/basketball power conferences — stories about these
+    // are sports even without a Montana team mention.
+    "big ten", "sec football", "acc football", "march madness", "final four",
   ], 2);
 
   // Civic / political content used to be its own desk — now folded into "city".
