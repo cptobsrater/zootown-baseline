@@ -210,11 +210,13 @@ export async function rescoreActive(opts: { ageHours?: number; limit?: number } 
     startsAt: string | null;
   }>;
 
-  let updated = 0;
-  // Batch updates in one SQL roundtrip per row to keep code simple; at
-  // ~2000 rows and a fast Postgres, this completes in well under 10s.
-  for (const r of rows) {
-    const out = scoreStory({
+  // Compute every score locally, then push the whole batch in ONE SQL
+  // statement (UPDATE ... FROM (VALUES ...) AS v(id,score)). This is
+  // ~100x faster than per-row UPDATE round-trips and lets us re-score
+  // 2000+ rows comfortably inside a 60s cron.
+  const tuples: Array<{ id: number; score: number }> = rows.map((r) => ({
+    id: r.id,
+    score: scoreStory({
       publishedAt: r.publishedAt,
       isSportsRecap: !!r.isSportsRecap,
       hasLocalWin: (r.sportsTeamsWon ?? []).length > 0,
@@ -225,9 +227,27 @@ export async function rescoreActive(opts: { ageHours?: number; limit?: number } 
       isSynthesis: !!r.isSynthesis,
       onCalendar: !!r.onCalendar,
       startsAt: r.startsAt,
-    });
-    await db.update(stories).set({ relevanceScore: out.score }).where(eq(stories.id, r.id));
-    updated++;
+    }).score,
+  }));
+  if (tuples.length === 0) return { scanned: 0, updated: 0 };
+  // postgres-js parameter binding: build (id, score), (id, score), ...
+  // We chunk to keep parameter count below Postgres' 65535 limit.
+  const CHUNK = 1000;
+  let updated = 0;
+  for (let i = 0; i < tuples.length; i += CHUNK) {
+    const chunk = tuples.slice(i, i + CHUNK);
+    const idsArr = chunk.map((t) => t.id);
+    const scoresArr = chunk.map((t) => t.score);
+    await db.execute(sql`
+      UPDATE stories AS s
+         SET relevance_score = v.score
+        FROM (
+          SELECT UNNEST(${idsArr}::int[]) AS id,
+                 UNNEST(${scoresArr}::double precision[]) AS score
+        ) AS v
+       WHERE s.id = v.id
+    `);
+    updated += chunk.length;
   }
   return { scanned: rows.length, updated };
 }

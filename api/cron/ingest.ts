@@ -142,8 +142,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // re-score the recent window so the time-decay curve stays accurate.
     // Both are cheap (pure functions over indexed rows + small UPDATEs).
     let enrichment: { classifier: Awaited<ReturnType<typeof reclassifyRecent>> | null; rescore: Awaited<ReturnType<typeof rescoreActive>> | null } = { classifier: null, rescore: null };
+    // Bounded per-tick caps so the cron stays comfortably under the 60s
+    // function budget even on first-deploy backfills. Steady state: most
+    // ticks have <10 unclassified rows and the bulk re-score completes
+    // in under a second.
     try {
-      enrichment.classifier = await reclassifyRecent({ ageHours: 24, limit: 200 });
+      enrichment.classifier = await reclassifyRecent({ ageHours: 30 * 24, limit: 150 });
     } catch (err: any) {
       console.error("[cron/ingest] reclassifyRecent failed:", err);
     }
