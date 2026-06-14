@@ -955,3 +955,61 @@ export const sponsorEditSchema = z.object({
     .optional(),
 });
 export type SponsorEditInput = z.infer<typeof sponsorEditSchema>;
+
+// Phase 16: historical profiles for anniversaries + slow-news-day fallback.
+//
+// A historical profile is a curated long-form entry (~300 words) about a
+// Montana figure, event, or place. It surfaces in two ways:
+//
+// 1. Anniversary: if today's month+day matches anniversary_month+anniversary_day
+//    and the entry has not been surfaced this calendar year, the daily
+//    surfacer creates a story row on the People desk.
+// 2. Slow-news-day fallback: if a city has had <N new People-desk stories in
+//    the past 24h, the surfacer picks the oldest-last_surfaced_at entry with
+//    eligible_for_fallback=true and creates a story.
+//
+// Stories created from a profile carry source_name="ZooTown History Desk" and
+// a source_url that points to the first source_urls[] entry.
+export const PROFILE_KINDS = ["figure", "event", "place"] as const;
+export const ANNIVERSARY_KINDS = ["birth", "death", "event", "other"] as const;
+
+export const historicalProfiles = pgTable("historical_profiles", {
+  id: serial("id").primaryKey(),
+  subjectName: text("subject_name").notNull(),
+  // Used as the story headline when surfaced. Should be a complete 6-12 word
+  // headline — the surfacer does not modify it. Example:
+  // "Charlie Russell, the cowboy artist who defined Montana, born 1864"
+  headline: text("headline").notNull(),
+  body: text("body").notNull(),
+  kind: text("kind").$type<(typeof PROFILE_KINDS)[number]>().notNull().default("figure"),
+  // Primary city association. NULL = statewide (eligible for all cities on fallback).
+  cityId: integer("city_id").references(() => cities.id),
+  anniversaryMonth: integer("anniversary_month").notNull(),
+  anniversaryDay: integer("anniversary_day").notNull(),
+  anniversaryYear: integer("anniversary_year"),
+  anniversaryKind: text("anniversary_kind")
+    .$type<(typeof ANNIVERSARY_KINDS)[number]>()
+    .notNull()
+    .default("birth"),
+  sourceUrls: text("source_urls").array().notNull().default(sql`ARRAY[]::text[]`),
+  imageUrl: text("image_url"),
+  imageCredit: text("image_credit"),
+  tags: text("tags"),
+  // Tracks when this profile was last turned into a story (any city). The
+  // surfacer uses YEAR(last_surfaced_at) to prevent re-running on the same
+  // anniversary twice the same year.
+  lastSurfacedAt: timestamp("last_surfaced_at", { mode: "string", withTimezone: true }),
+  // If true, this profile can be used as slow-news-day fallback content even
+  // when today's date does not match its anniversary.
+  eligibleForFallback: boolean("eligible_for_fallback").notNull().default(true),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const insertHistoricalProfileSchema = createInsertSchema(historicalProfiles).omit({
+  id: true,
+  createdAt: true,
+  lastSurfacedAt: true,
+});
+export type InsertHistoricalProfile = z.infer<typeof insertHistoricalProfileSchema>;
+export type HistoricalProfile = typeof historicalProfiles.$inferSelect;
