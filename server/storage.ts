@@ -173,6 +173,14 @@ function rowToStory(r: any): Story {
       ? (r.synthesizedFromIds as number[])
       : [],
     clusterId: (r.cluster_id ?? r.clusterId ?? null) as number | null,
+    // Phase 14 link fields. Defaults match the column defaults so legacy
+    // rows that pre-date these columns deserialize cleanly.
+    primaryLink: r.primary_link ?? r.primaryLink ?? null,
+    linkType: (r.link_type ?? r.linkType ?? null) as Story["linkType"],
+    fbUrl: r.fb_url ?? r.fbUrl ?? null,
+    venueUrl: r.venue_url ?? r.venueUrl ?? null,
+    sourceConfidence: Number(r.source_confidence ?? r.sourceConfidence ?? 1),
+    linkVerifiedAt: r.link_verified_at ?? r.linkVerifiedAt ?? null,
   };
 }
 
@@ -663,7 +671,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createStory(input: InsertStory): Promise<Story> {
-    const rows = await db.insert(stories).values(input).returning();
+    const rows = await db.insert(stories).values(input as any).returning();
     return rowToStory(rows[0]);
   }
 
