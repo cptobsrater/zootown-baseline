@@ -158,6 +158,11 @@ function AdminInner() {
                 Learning rules →
               </a>
             </Link>
+            <Link href="/admin/x-unmapped" data-testid="link-x-unmapped">
+              <a className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate">
+                X authors →
+              </a>
+            </Link>
             <Link href="/admin/cockpit" data-testid="link-cockpit">
               <a className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate">
                 Classic →
