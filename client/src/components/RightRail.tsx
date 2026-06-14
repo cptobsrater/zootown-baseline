@@ -1,18 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
-import type { Story, Source } from "@shared/schema";
+import type { Story } from "@shared/schema";
 import { type DeskId, relativeTime } from "@/lib/format";
 import { DeskBadge } from "./DeskBadge";
-import { Tag, Radio } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useCity } from "@/lib/city-context";
 
 interface Props {
   onOpenStory: (s: Story) => void;
-  onSelectTag: (tag: string) => void;
-  onOpenSources: () => void;
 }
 
-export function RightRail({ onOpenStory, onSelectTag, onOpenSources }: Props) {
+/**
+ * Right rail. Currently shows only "Top stories" \u2014 the trending-tags and
+ * source-snapshot panels were removed in the Phase 24 design pass since
+ * the same affordances live in the top nav (Sources & About) and we
+ * stopped surfacing tags on cards anyway. The empty space is intentional;
+ * Phase 25 may bring a new right-rail block once we know what the
+ * community actually wants there.
+ */
+export function RightRail({ onOpenStory }: Props) {
   const { currentCity } = useCity();
   const citySlug = currentCity.slug;
   const top = useQuery<Story[]>({
@@ -22,24 +27,9 @@ export function RightRail({ onOpenStory, onSelectTag, onOpenSources }: Props) {
       return (await res.json()) as Story[];
     },
   });
-  const tags = useQuery<Array<{ tag: string; count: number }>>({
-    queryKey: ["/api/trending-tags", citySlug],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/trending-tags?city=${citySlug}`);
-      return (await res.json()) as Array<{ tag: string; count: number }>;
-    },
-  });
-  const sources = useQuery<Source[]>({
-    queryKey: ["/api/sources", citySlug],
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/sources?city=${citySlug}`);
-      return (await res.json()) as Source[];
-    },
-  });
 
   return (
     <aside className="space-y-6" aria-label="Right rail">
-      {/* Top this week */}
       <section
         aria-labelledby="rr-top"
         className="rounded-lg border border-card-border bg-card p-5"
@@ -90,64 +80,6 @@ export function RightRail({ onOpenStory, onSelectTag, onOpenSources }: Props) {
               </li>
             ))}
         </ol>
-      </section>
-
-      {/* Trending tags */}
-      <section
-        aria-labelledby="rr-tags"
-        className="rounded-lg border border-card-border bg-card p-5"
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <Tag className="h-3.5 w-3.5 text-muted-foreground" />
-          <h2
-            id="rr-tags"
-            className="font-mono text-[0.64rem] uppercase tracking-[0.2em] text-muted-foreground"
-          >
-            Trending tags
-          </h2>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {(tags.data ?? []).map((t) => (
-            <button
-              key={t.tag}
-              onClick={() => onSelectTag(t.tag)}
-              className="group inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/50 px-2.5 py-1 text-[0.76rem] text-foreground hover-elevate"
-              data-testid={`button-tag-${t.tag}`}
-            >
-              <span className="text-muted-foreground group-hover:text-foreground">#{t.tag}</span>
-              <span className="font-mono text-[0.64rem] text-muted-foreground tabular-nums">
-                {t.count}
-              </span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* Source snapshot */}
-      <section
-        aria-labelledby="rr-sources"
-        className="rounded-lg border border-card-border bg-card p-5"
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <Radio className="h-3.5 w-3.5 text-muted-foreground" />
-          <h2
-            id="rr-sources"
-            className="font-mono text-[0.64rem] uppercase tracking-[0.2em] text-muted-foreground"
-          >
-            Source snapshot
-          </h2>
-        </div>
-        <div className="text-xs text-muted-foreground leading-relaxed">
-          Monitoring <span className="text-foreground font-medium">{sources.data?.length ?? 0}</span>{" "}
-          {currentCity.displayName} sources across local news, official civic channels, and community calendars.
-        </div>
-        <button
-          onClick={onOpenSources}
-          className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover-elevate active-elevate-2"
-          data-testid="button-open-sources"
-        >
-          View all sources
-        </button>
       </section>
     </aside>
   );

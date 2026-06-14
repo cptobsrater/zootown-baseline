@@ -663,11 +663,7 @@ export default function Home() {
 
           <div className="lg:block">
             <div className="sticky top-[128px]">
-              <RightRail
-                onOpenStory={setSelected}
-                onSelectTag={(t) => setQuery(t)}
-                onOpenSources={() => setSourcesOpen(true)}
-              />
+              <RightRail onOpenStory={setSelected} />
             </div>
           </div>
         </div>
