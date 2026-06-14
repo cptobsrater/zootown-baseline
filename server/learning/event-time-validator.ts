@@ -53,9 +53,24 @@ const RED_FLAG_PATTERNS: RegExp[] = [
  * we treat it as a parser fallback rather than a confident timestamp.
  *
  * Exception: events whose source clearly said "midnight" or "12am" pass.
+ *
+ * IMPORTANT: "midnight" must be checked in the SOURCE's local timezone, not
+ * UTC. A 6 PM Mountain Time event serializes as `2026-06-17T18:00:00-0600`
+ * = UTC `2026-06-18T00:00:00Z`. Checking UTC hours would flag every
+ * evening Montana event as a midnight fallback. We instead inspect the
+ * raw ISO string for an explicit `T00:00:00` at the head of the time
+ * portion -- only then is it actually local midnight.
  */
-function looksLikeMidnightFallback(startsAt: Date, raw?: string | null): boolean {
-  if (startsAt.getUTCHours() !== 0 || startsAt.getUTCMinutes() !== 0) return false;
+function looksLikeMidnightFallback(rawIso: string, raw?: string | null): boolean {
+  // Match the time portion of an ISO 8601 string. We accept either Z or
+  // an explicit offset (+HH:MM, -HHMM, etc.).
+  const m = rawIso.match(/T(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+\-]\d{2}:?\d{2})?$/);
+  if (!m) return false;
+  const localHour = Number(m[1]);
+  const localMin = Number(m[2]);
+  if (localHour !== 0 || localMin !== 0) return false;
+  // Source-local midnight. Allow when the body text actually says
+  // midnight / 12am / all day.
   if (!raw) return true;
   const r = raw.toLowerCase();
   if (/(midnight|12\s*am|12:00\s*am|all day|all-day)/i.test(r)) return false;
@@ -76,7 +91,8 @@ export function validateEventTime(input: ValidateInput): ValidateResult {
     return { ok: false, reason: "no_time" };
   }
 
-  const parsed = new Date(input.startsAt);
+  const rawIso = input.startsAt;
+  const parsed = new Date(rawIso);
   if (Number.isNaN(parsed.getTime())) {
     return { ok: false, reason: "unparseable_time" };
   }
@@ -88,8 +104,8 @@ export function validateEventTime(input: ValidateInput): ValidateResult {
   }
 
   // Midnight-fallback heuristic.
-  if (looksLikeMidnightFallback(parsed, raw)) {
-    return { ok: false, reason: "midnight_fallback" };
+  if (looksLikeMidnightFallback(rawIso, raw)) {
+    return { ok: false, reason: "midnight_fallback_local" };
   }
 
   return { ok: true, startsAt: parsed.toISOString() };
