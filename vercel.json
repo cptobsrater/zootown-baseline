@@ -26,7 +26,7 @@
     "api/story-preview.ts": { "maxDuration": 10 },
     "api/og-image.ts": { "maxDuration": 15 },
     "api/cron/ingest.ts": { "maxDuration": 60 },
-    "api/cron/venue-ingest.ts": { "maxDuration": 90 },
+    "api/cron/venue-ingest.ts": { "maxDuration": 120 },
     "api/cron/daily-writer.ts": { "maxDuration": 30 },
     "api/cron/rotate-history.ts": { "maxDuration": 30 }
   }

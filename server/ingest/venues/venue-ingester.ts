@@ -373,7 +373,7 @@ export async function tickVenueIngest(minHours = 20): Promise<{ ran: VenueIngest
   const ran: VenueIngestReport[] = [];
   const skipped: string[] = [];
   const startedAt = Date.now();
-  const SOFT_DEADLINE_MS = 75_000; // 90s budget with headroom
+  const SOFT_DEADLINE_MS = 105_000; // 120s function budget, 15s headroom
 
   // First pass: figure out which venues are eligible this tick.
   const eligible: typeof CURATED_VENUES = [];
@@ -389,8 +389,12 @@ export async function tickVenueIngest(minHours = 20): Promise<{ ran: VenueIngest
     }
   }
 
-  // Concurrency-capped worker pool.
-  const CONCURRENCY = 4;
+  // Concurrency-capped worker pool. Cloudflare Browser Rendering's free tier
+  // allows 3 concurrent browsers; we cap at 2 to leave headroom for any
+  // other CF calls happening elsewhere in the system. Without this cap we
+  // saw 11 of 12 FB venues silently return empty event grids because their
+  // browser sessions were rejected.
+  const CONCURRENCY = 2;
   const queue = [...eligible];
   async function worker(): Promise<void> {
     while (queue.length) {
