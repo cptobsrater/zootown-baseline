@@ -10,7 +10,9 @@ import { pollXList, MONTANA_LIST_ID } from "../../server/ingest/x-fetcher.js";
 import { processXSignals } from "../../server/ingest/x-signal-processor.js";
 import { buildClusters } from "../../server/learning/cluster-builder.js";
 import { runSynthesizer } from "../../server/learning/synthesizer.js";
-import { reclassifyRecent, rescoreActive } from "../../server/learning/story-enrichment.js";
+// Story enrichment moved to its own cron (/api/cron/enrich) so the 5-min
+// ingest loop has its full 60s budget for the RSS + X + cluster + synth
+// pipeline.
 // Venue ingest moved to its own cron (/api/cron/venue-ingest) so its
 // HTTP fan-out doesn't squeeze RSS/X/cluster/synthesis inside the 60s
 // function budget.
@@ -137,26 +139,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // ---- Story enrichment (Phase 15) ----
-    // Classify any newly-landed rows that the ingester missed, then
-    // re-score the recent window so the time-decay curve stays accurate.
-    // Both are cheap (pure functions over indexed rows + small UPDATEs).
-    let enrichment: { classifier: Awaited<ReturnType<typeof reclassifyRecent>> | null; rescore: Awaited<ReturnType<typeof rescoreActive>> | null } = { classifier: null, rescore: null };
-    // Bounded per-tick caps so the cron stays comfortably under the 60s
-    // function budget even on first-deploy backfills. Steady state: most
-    // ticks have <10 unclassified rows and the bulk re-score completes
-    // in under a second.
-    try {
-      enrichment.classifier = await reclassifyRecent({ ageHours: 30 * 24, limit: 150 });
-    } catch (err: any) {
-      console.error("[cron/ingest] reclassifyRecent failed:", err);
-    }
-    try {
-      enrichment.rescore = await rescoreActive({ ageHours: 14 * 24, limit: 2000 });
-    } catch (err: any) {
-      console.error("[cron/ingest] rescoreActive failed:", err);
-    }
-
     res.json({
       ok: true,
       checked: sources.length,
@@ -166,7 +148,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       x,
       clusters: clusterSummary,
       synthesis: synthSummary,
-      enrichment,
     });
   } catch (err: any) {
     console.error("[cron/ingest] error:", err);
