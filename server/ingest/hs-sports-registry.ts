@@ -27,7 +27,7 @@ export const HS_SCHOOL_SEEDS: SchoolSeed[] = [
   // ---- Billings (2) ----
   { cityId: 2, schoolName: "Billings Senior Broncs", shortName: "Billings Senior", citySlug: "billings", schoolSlug: "billings-senior-broncs" },
   { cityId: 2, schoolName: "Billings West Golden Bears", shortName: "Billings West", citySlug: "billings", schoolSlug: "billings-west-golden-bears" },
-  { cityId: 2, schoolName: "Billings Skyview Falcons", shortName: "Skyview", citySlug: "billings", schoolSlug: "billings-skyview-falcons" },
+  { cityId: 2, schoolName: "Billings Skyview Falcons", shortName: "Skyview", citySlug: "billings", schoolSlug: "skyview-falcons" },
 
   // ---- Great Falls (3) ----
   { cityId: 3, schoolName: "Great Falls Bison", shortName: "Great Falls", citySlug: "great-falls", schoolSlug: "great-falls-bison" },
