@@ -181,6 +181,25 @@ function rowToStory(r: any): Story {
     venueUrl: r.venue_url ?? r.venueUrl ?? null,
     sourceConfidence: Number(r.source_confidence ?? r.sourceConfidence ?? 1),
     linkVerifiedAt: r.link_verified_at ?? r.linkVerifiedAt ?? null,
+    // Phase 15 relevance + classifier outputs.
+    relevanceScore: Number(r.relevance_score ?? r.relevanceScore ?? 40),
+    isSportsRecap: Boolean(r.is_sports_recap ?? r.isSportsRecap ?? false),
+    sportsTeamsWon: Array.isArray(r.sports_teams_won)
+      ? (r.sports_teams_won as string[])
+      : Array.isArray(r.sportsTeamsWon)
+        ? (r.sportsTeamsWon as string[])
+        : [],
+    sportsTeamsLost: Array.isArray(r.sports_teams_lost)
+      ? (r.sports_teams_lost as string[])
+      : Array.isArray(r.sportsTeamsLost)
+        ? (r.sportsTeamsLost as string[])
+        : [],
+    sportsLevel: (r.sports_level ?? r.sportsLevel ?? null) as Story["sportsLevel"],
+    isPeopleProfile: Boolean(r.is_people_profile ?? r.isPeopleProfile ?? false),
+    peopleScope: (r.people_scope ?? r.peopleScope ?? null) as Story["peopleScope"],
+    peopleSubject: r.people_subject ?? r.peopleSubject ?? null,
+    isObituary: Boolean(r.is_obituary ?? r.isObituary ?? false),
+    classifierAt: r.classifier_at ?? r.classifierAt ?? null,
   };
 }
 
@@ -590,26 +609,32 @@ export class DatabaseStorage implements IStorage {
       const pinnedIds = new Set(pinnedItems.map((s) => s.id));
       const remainingLimit = Math.max(0, limit - pinnedItems.length);
 
-      // Stratified fetch: pull the newest perDeskCap+1 rows from EACH desk
+      // Stratified fetch: pull the top perDeskCap+1 rows from EACH desk
       // present in the city via a window function. This guarantees variety
-      // even when one desk (e.g. an Eventbrite burst) has hundreds of rows
-      // at the chronological top -- the top per-desk slots are independent.
+      // even when one desk has hundreds of rows at the chronological top.
       // Drizzle does not have a clean .raw chainable; we hand-build the SQL.
+      //
+      // Phase 15: "top" is now relevance_score DESC, published_at DESC
+      // instead of pure chronology. A story's position in the feed reflects
+      // collective value (wins/profiles/obituaries get elevated, decaying
+      // over their natural half-lives) rather than just recency. Final
+      // interleave is also by relevance + recency so the front of the feed
+      // is the highest-signal mix possible.
       const perDeskFetch = perDeskCap + 2; // a little headroom for picking
       const baseWhere = whereClause as any;
-      // Window-function pull: rank stories per desk by published_at DESC.
-      // We pull up to `perDeskFetch` rows per desk, then in JS interleave
-      // them in chronological order so the page still feels "newest first".
       const stratifiedRows = await db.execute(sql`
         WITH ranked AS (
           SELECT *,
-            ROW_NUMBER() OVER (PARTITION BY desk ORDER BY published_at DESC) AS rn
+            ROW_NUMBER() OVER (
+              PARTITION BY desk
+              ORDER BY relevance_score DESC, published_at DESC
+            ) AS rn
           FROM stories
           WHERE ${baseWhere ?? sql`TRUE`}
             AND pinned_at IS NULL
         )
         SELECT * FROM ranked WHERE rn <= ${perDeskFetch}
-        ORDER BY published_at DESC
+        ORDER BY relevance_score DESC, published_at DESC
       `);
       // postgres-js returns the rows as a plain array on .execute().
       const buffer = ((stratifiedRows as unknown as any[]) || [])
@@ -647,14 +672,15 @@ export class DatabaseStorage implements IStorage {
     }
 
     // Pinned rows float to the top of every feed they appear in. Among
-    // multiple pinned rows, newest-pin-first. Among unpinned rows, the usual
-    // newest-publish-first.
+    // multiple pinned rows, newest-pin-first. Among unpinned rows, the
+    // Phase 15 ordering: relevance_score DESC, then published_at DESC.
     const rows = await db
       .select()
       .from(stories)
       .where(whereClause as any)
       .orderBy(
         sql`${stories.pinnedAt} DESC NULLS LAST`,
+        sql`${stories.relevanceScore} DESC`,
         desc(stories.publishedAt),
       )
       .limit(limit)

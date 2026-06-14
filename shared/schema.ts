@@ -116,6 +116,33 @@ export const stories = pgTable("stories", {
   venueUrl: text("venue_url"),
   sourceConfidence: integer("source_confidence").notNull().default(1),
   linkVerifiedAt: text("link_verified_at"),
+  // Phase 15: relevance + classifier outputs.
+  //
+  // relevanceScore drives feed ordering. Stories at the top look identical
+  // to stories further down; position alone signals collective value. A
+  // recurring scorer re-computes this every ~15 minutes so wins decay
+  // naturally over ~24h, obituaries over ~72h, anniversary entries over
+  // ~1 day, etc. Default 40.0 = a baseline news story.
+  relevanceScore: doublePrecision("relevance_score").notNull().default(40.0),
+  // Sports classifier outputs.
+  isSportsRecap: boolean("is_sports_recap").notNull().default(false),
+  // Which Montana teams won/lost the matchup, by team-id (see
+  // server/learning/montana-teams.ts). Both empty if not a recap.
+  sportsTeamsWon: text("sports_teams_won").array().notNull().default(sql`ARRAY[]::text[]`),
+  sportsTeamsLost: text("sports_teams_lost").array().notNull().default(sql`ARRAY[]::text[]`),
+  // Highest professional level of any local team in the recap. Drives the
+  // same-day tie-breaker for elevation: pro > d1 > d2_naia > jc_club >
+  // hs_varsity > sub_varsity.
+  sportsLevel: text("sports_level").$type<"pro" | "d1" | "d2_naia" | "jc_club" | "hs_varsity" | "sub_varsity">(),
+  // People-profile classifier outputs.
+  isPeopleProfile: boolean("is_people_profile").notNull().default(false),
+  peopleScope: text("people_scope").$type<"national" | "regional" | "state" | "community">(),
+  peopleSubject: text("people_subject"),
+  // Obituaries are a third People-desk content type with their own
+  // ingestion path (newspaper obit feeds) and verbatim display.
+  isObituary: boolean("is_obituary").notNull().default(false),
+  // When the classifier last ran on this row. Null = needs classification.
+  classifierAt: timestamp("classifier_at", { mode: "string", withTimezone: true }),
 });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export type InsertStory = z.infer<typeof insertStorySchema>;
