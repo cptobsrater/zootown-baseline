@@ -94,6 +94,18 @@ export const stories = pgTable("stories", {
   // floats to the top of any feed, newest-pin-first.
   // Migration: supabase/migrations/0005_story_pinning.sql
   pinnedAt: timestamp("pinned_at", { mode: "string", withTimezone: true }),
+  // Synthesis attribution (Migration: 0010_synthesis.sql)
+  // A synthesis story is one ZooTown produced by reading multiple sources
+  // and writing a neutral, factual summary. synthesizedFromIds points back
+  // to the source stories that fed the synthesis.
+  isSynthesis: boolean("is_synthesis").notNull().default(false),
+  synthesizedFromIds: integer("synthesized_from_ids")
+    .array()
+    .notNull()
+    .default(sql`ARRAY[]::integer[]`),
+  // When the story originated from a cluster, this links back so we can
+  // show the audit trail in the cockpit.
+  clusterId: integer("cluster_id"),
 });
 export const insertStorySchema = createInsertSchema(stories).omit({ id: true });
 export type InsertStory = z.infer<typeof insertStorySchema>;
@@ -757,6 +769,58 @@ export type Cluster = typeof clusters.$inferSelect;
 export type InsertCluster = typeof clusters.$inferInsert;
 export type ClusterMember = typeof clusterMembers.$inferSelect;
 export type InsertClusterMember = typeof clusterMembers.$inferInsert;
+
+// ============================================================================
+// SYNTHESIS QUEUE -- Phase 12. Holds Gemini-written drafts whose cluster
+// verdict was 'review'. Auto-publish clusters skip the queue and write
+// directly to stories. Migration: 0010_synthesis.sql
+// ============================================================================
+
+export const SYNTHESIS_STATUSES = [
+  "pending",   // waiting on admin review
+  "approved",  // admin clicked approve; story_id is set on stories row
+  "rejected",  // admin clicked reject; cluster gets verdict=suppress
+  "published", // auto_publish path; landed in stories without ever sitting here
+] as const;
+export type SynthesisStatus = (typeof SYNTHESIS_STATUSES)[number];
+
+export const synthesisQueue = pgTable("synthesis_queue", {
+  id: serial("id").primaryKey(),
+  clusterId: integer("cluster_id").notNull().unique(),
+  headline: text("headline").notNull(),
+  body: text("body").notNull(),
+  desk: text("desk").notNull(),
+  cityId: integer("city_id"),
+  model: text("model").notNull().default("gemini-1.5-flash"),
+  sourceStoryIds: integer("source_story_ids").array().notNull().default(sql`ARRAY[]::integer[]`),
+  status: text("status").$type<SynthesisStatus>().notNull().default("pending"),
+  reviewer: text("reviewer"),
+  reviewedAt: timestamp("reviewed_at", { mode: "string", withTimezone: true }),
+  reviewerNote: text("reviewer_note"),
+  clusterDiversity: numeric("cluster_diversity", { precision: 3, scale: 2 }),
+  clusterMontana: numeric("cluster_montana", { precision: 3, scale: 2 }),
+  clusterPolitics: numeric("cluster_politics", { precision: 3, scale: 2 }),
+  clusterAuthors: integer("cluster_authors"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type SynthesisDraft = typeof synthesisQueue.$inferSelect;
+export type InsertSynthesisDraft = typeof synthesisQueue.$inferInsert;
+
+/** Zod for admin synthesis review payload. */
+export const synthesisReviewSchema = z.object({
+  action: z.enum(["approve", "reject"]),
+  reviewerNote: z.string().max(500).optional(),
+  // Optionally override the headline / body before approving.
+  headline: z.string().min(1).max(300).optional(),
+  body: z.string().min(1).max(3000).optional(),
+});
+export type SynthesisReviewInput = z.infer<typeof synthesisReviewSchema>;
 
 export type Sponsor = typeof sponsors.$inferSelect;
 export type InsertSponsor = typeof sponsors.$inferInsert;

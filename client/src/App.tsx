@@ -15,6 +15,7 @@ import CockpitPage from "@/pages/cockpit";
 import CockpitLivePage from "@/pages/cockpit-live";
 import RulesQueuePage from "@/pages/rules-queue";
 import XUnmappedPage from "@/pages/x-unmapped";
+import SynthesisQueuePage from "@/pages/synthesis-queue";
 import CalendarPage from "@/pages/calendar";
 import JobsPage from "@/pages/jobs";
 import FeedbackPage from "@/pages/feedback";
@@ -33,6 +34,7 @@ function AppRouter() {
       <Route path="/admin/cockpit-live" component={CockpitLivePage} />
       <Route path="/admin/rules-queue" component={RulesQueuePage} />
       <Route path="/admin/x-unmapped" component={XUnmappedPage} />
+      <Route path="/admin/synthesis-queue" component={SynthesisQueuePage} />
       {/* Admin is not city-scoped at the URL level (admin uses an in-page city switcher) */}
       <Route path="/admin" component={AdminPage} />
 

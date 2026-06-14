@@ -2,7 +2,7 @@ import type { Express } from "express";
 import type { Server } from "node:http";
 import { storage, db } from "./storage.js";
 import { eq, desc, sql } from "drizzle-orm";
-import { xUnmapped, xAuthors, xListCursor } from "../shared/schema.js";
+import { xUnmapped, xAuthors, xListCursor, synthesisQueue, clusters, stories as storiesTable } from "../shared/schema.js";
 import { z } from "zod";
 import { ingestAll, ingestSource } from "./ingest/ingester.js";
 import { rssFetcher } from "./ingest/rss.js";
@@ -703,6 +703,128 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         authorsTotal: authorsRes[0]?.count ?? 0,
         unmappedTotal: unmappedRes[0]?.count ?? 0,
       },
+    });
+  });
+
+  // ===== Phase 12: Synthesis review queue =====
+  // Clusters with verdict=review go through Gemini and land here for admin
+  // approval before publishing. Auto-publish clusters skip this step.
+  app.get("/api/admin/synthesis-queue", requireAdmin, async (req, res) => {
+    const status = (req.query.status as string | undefined) ?? "pending";
+    const where =
+      status === "all"
+        ? (sql`TRUE` as any)
+        : (eq(synthesisQueue.status, status as any) as any);
+    const rows = await db
+      .select()
+      .from(synthesisQueue)
+      .where(where)
+      .orderBy(desc(synthesisQueue.createdAt))
+      .limit(200);
+    res.json({ items: rows });
+  });
+
+  // Approve or reject. On approve, the draft becomes a story (with optional
+  // headline/body overrides) and the cluster gets stamped with the story id.
+  // On reject, the cluster's verdict flips to 'suppress' so we don't retry.
+  app.post("/api/admin/synthesis-queue/:id/review", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const { synthesisReviewSchema } = await import("../shared/schema.js");
+    const parsed = synthesisReviewSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const [draft] = await db.select().from(synthesisQueue).where(eq(synthesisQueue.id, id));
+    if (!draft) return res.status(404).json({ error: "Not found" });
+    if (draft.status !== "pending") {
+      return res.status(409).json({ error: "already_reviewed", status: draft.status });
+    }
+    const now = new Date().toISOString();
+    const adminId = (req as any).adminId ?? "admin";
+
+    if (parsed.data.action === "approve") {
+      const headline = parsed.data.headline ?? draft.headline;
+      const body = parsed.data.body ?? draft.body;
+      const synthUrl = `https://www.zootownhub.com/synthesis/cluster-${draft.clusterId}`;
+      const created = await storage.createStory({
+        headline,
+        summary: body,
+        desk: draft.desk as any,
+        tags: JSON.stringify(["zootown-synthesis"]),
+        sourceName: "ZooTown",
+        sourceUrl: synthUrl,
+        sourceType: "synthesis" as any,
+        publishedAt: now,
+        fetchedAt: now,
+        location: null,
+        cityId: draft.cityId,
+        modState: "approved" as any,
+        onCalendar: false,
+        isReviewed: true,
+        reviewedAt: now,
+        riskLevel: "low",
+        isSeeded: false,
+        isSynthesis: true,
+        synthesizedFromIds: draft.sourceStoryIds as any,
+        clusterId: draft.clusterId,
+      } as any);
+      await db
+        .update(clusters)
+        .set({ synthesisStoryId: created.id, updatedAt: now })
+        .where(eq(clusters.id, draft.clusterId));
+      await db
+        .update(synthesisQueue)
+        .set({
+          status: "approved" as any,
+          reviewer: adminId,
+          reviewedAt: now,
+          reviewerNote: parsed.data.reviewerNote ?? null,
+          headline,
+          body,
+          updatedAt: now,
+        })
+        .where(eq(synthesisQueue.id, id));
+      res.json({ ok: true, storyId: created.id });
+      return;
+    }
+
+    // Reject path
+    await db
+      .update(synthesisQueue)
+      .set({
+        status: "rejected" as any,
+        reviewer: adminId,
+        reviewedAt: now,
+        reviewerNote: parsed.data.reviewerNote ?? null,
+        updatedAt: now,
+      })
+      .where(eq(synthesisQueue.id, id));
+    // Also flip the cluster to suppress so we don't keep re-synthesizing.
+    await db
+      .update(clusters)
+      .set({
+        verdict: "suppress" as any,
+        verdictReason: "admin_rejected",
+        updatedAt: now,
+      })
+      .where(eq(clusters.id, draft.clusterId));
+    res.json({ ok: true });
+  });
+
+  // Quick stats: clusters by verdict + recent published syntheses
+  app.get("/api/admin/synthesis-stats", requireAdmin, async (_req, res) => {
+    const verdictRows = (await db.execute(
+      sql`SELECT verdict, COUNT(*)::int as count FROM clusters GROUP BY verdict`,
+    )) as unknown as { verdict: string; count: number }[];
+    const pendingRows = (await db.execute(
+      sql`SELECT COUNT(*)::int as count FROM synthesis_queue WHERE status = 'pending'`,
+    )) as unknown as { count: number }[];
+    const publishedRows = (await db.execute(
+      sql`SELECT COUNT(*)::int as count FROM stories WHERE is_synthesis = true`,
+    )) as unknown as { count: number }[];
+    res.json({
+      clustersByVerdict: verdictRows,
+      pendingReview: pendingRows[0]?.count ?? 0,
+      publishedTotal: publishedRows[0]?.count ?? 0,
     });
   });
 

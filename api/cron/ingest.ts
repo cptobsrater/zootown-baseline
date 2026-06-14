@@ -9,6 +9,7 @@ import { ingestSource } from "../../server/ingest/ingester.js";
 import { pollXList, MONTANA_LIST_ID } from "../../server/ingest/x-fetcher.js";
 import { processXSignals } from "../../server/ingest/x-signal-processor.js";
 import { buildClusters } from "../../server/learning/cluster-builder.js";
+import { runSynthesizer } from "../../server/learning/synthesizer.js";
 import { xListCursor } from "../../shared/schema.js";
 import { eq } from "drizzle-orm";
 
@@ -89,14 +90,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ---- Cluster builder ----
-    // Always runs (cheap, no external API calls). Reads recent stories + tweets,
-    // groups by topic signature, scores the four axes, writes verdicts. The
-    // synthesizer (next phase) reads cluster rows to decide what to publish.
+    // Cheap (no external API calls). Reads recent stories + tweets, groups
+    // by topic signature, scores the four axes, writes verdicts.
     let clusterSummary: Awaited<ReturnType<typeof buildClusters>> | null = null;
     try {
       clusterSummary = await buildClusters();
     } catch (err: any) {
       console.error("[cron/ingest] cluster builder failed:", err);
+    }
+
+    // ---- Synthesizer ----
+    // Reads clusters with verdict in (auto_publish, review) that don't yet
+    // have a synthesis_story_id. Calls Gemini Flash, lands auto_publish
+    // results directly to stories and review results into synthesis_queue.
+    // Capped at 5 clusters per tick to bound the latency.
+    let synthSummary: Awaited<ReturnType<typeof runSynthesizer>> | null = null;
+    try {
+      synthSummary = await runSynthesizer();
+    } catch (err: any) {
+      console.error("[cron/ingest] synthesizer failed:", err);
     }
 
     // ---- RSS sources next ----
@@ -129,6 +141,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       results,
       x,
       clusters: clusterSummary,
+      synthesis: synthSummary,
     });
   } catch (err: any) {
     console.error("[cron/ingest] error:", err);

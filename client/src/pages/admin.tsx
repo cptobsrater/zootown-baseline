@@ -163,6 +163,11 @@ function AdminInner() {
                 X authors →
               </a>
             </Link>
+            <Link href="/admin/synthesis-queue" data-testid="link-synthesis-queue">
+              <a className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/60 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100">
+                Synthesis queue →
+              </a>
+            </Link>
             <Link href="/admin/cockpit" data-testid="link-cockpit">
               <a className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover-elevate">
                 Classic →

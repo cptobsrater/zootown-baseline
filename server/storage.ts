@@ -160,6 +160,15 @@ function rowToStory(r: any): Story {
       if (!raw) return null;
       return raw instanceof Date ? raw.toISOString() : String(raw);
     })(),
+    // Synthesis attribution (Phase 12). Defaults match the column defaults
+    // for rows written before this column existed.
+    isSynthesis: Boolean(r.is_synthesis ?? r.isSynthesis ?? false),
+    synthesizedFromIds: Array.isArray(r.synthesized_from_ids)
+      ? (r.synthesized_from_ids as number[])
+      : Array.isArray(r.synthesizedFromIds)
+      ? (r.synthesizedFromIds as number[])
+      : [],
+    clusterId: (r.cluster_id ?? r.clusterId ?? null) as number | null,
   };
 }
 
