@@ -1272,14 +1272,22 @@ function TrashPanel({ onClose }: { onClose: () => void }) {
 
 // --- Phase 28: Edit dialog (fields + side-by-side chat) ---
 
-// Tags come back from the API as either a Postgres-array-style string
-// ("{a,b}"), a comma-separated string ("a, b"), a JS array, or null.
-// Normalize before anything tries to .join() on it.
+// Tags come back from the API as any of: a JS array, a Postgres array
+// literal ("{a,b}"), a JSON-stringified array ("[\"a\",\"b\"]" or "[]"),
+// a comma-separated string, or null. Normalize before anything tries to
+// .join() on it.
 function normalizeTags(raw: unknown): string[] {
   if (raw == null) return [];
   if (Array.isArray(raw)) return raw.map((t) => String(t)).filter(Boolean);
   const s = String(raw).trim();
-  if (!s) return [];
+  if (!s || s === "[]" || s === "{}") return [];
+  // JSON array literal
+  if (s.startsWith("[") && s.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(s);
+      if (Array.isArray(parsed)) return parsed.map((t) => String(t)).filter(Boolean);
+    } catch { /* fall through */ }
+  }
   // Postgres array literal: {a,b,c}
   if (s.startsWith("{") && s.endsWith("}")) {
     return s.slice(1, -1).split(",").map((t) => t.trim().replace(/^"|"$/g, "")).filter(Boolean);
