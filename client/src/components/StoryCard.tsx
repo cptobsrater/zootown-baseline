@@ -1,10 +1,7 @@
 import type { Story } from "@shared/schema";
 import {
   DESK_META,
-  POLITICAL_SCOPE_META,
   type DeskId,
-  type PoliticalScope,
-  parseTags,
   relativeTime,
   absoluteDate,
   formatEventRange,
@@ -12,7 +9,7 @@ import {
 import { DeskBadge } from "./DeskBadge";
 import { ShareButton } from "./ShareButton";
 import { FeedbackBar } from "./FeedbackBar";
-import { ExternalLink, Layers, MapPin, Scale } from "lucide-react";
+import { ExternalLink, MapPin, Calendar } from "lucide-react";
 
 export type StoryWithSourceCount = Story & {
   sourceCount?: number;
@@ -26,26 +23,13 @@ interface Props {
   onOpen: (s: Story) => void;
 }
 
-const SOURCE_BADGE_STYLE: Record<string, string> = {
-  Official: "bg-desk-city/10 text-[hsl(var(--desk-city))] border border-[hsl(var(--desk-city))]/30",
-  "Local News":
-    "bg-desk-business/10 text-[hsl(var(--desk-business))] border border-[hsl(var(--desk-business))]/30",
-  "Community Calendar":
-    "bg-desk-entertainment/10 text-[hsl(var(--desk-entertainment))] border border-[hsl(var(--desk-entertainment))]/30",
-};
-
-// Display-only relabel: data still stores the long source-type name so the
-// admin/ingest pipeline keeps its existing taxonomy, but the public pill is
-// shorter and friendlier on small cards. "Community Calendar" reads as
-// "Event" -- those rows are always upcoming events, never recurring news.
-const SOURCE_BADGE_LABEL: Record<string, string> = {
-  "Community Calendar": "Event",
-};
-
 export function StoryCard({ story, onOpen }: Props) {
-  const tags = parseTags(story.tags);
   const desk = story.desk as DeskId;
   const deskMeta = DESK_META[desk] ?? DESK_META.city;
+  // An "Event" marker on the top line whenever the story is a future-dated
+  // calendar event. Lives between the desk badge and the posted-time,
+  // replacing the old bottom-row source-type pill (Cody feedback, Phase 24).
+  const isUpcomingEvent = !!(story.onCalendar && story.startsAt);
 
   return (
     <article
@@ -64,8 +48,21 @@ export function StoryCard({ story, onOpen }: Props) {
       {/* Desk stripe */}
       <div className={`absolute left-0 top-5 bottom-5 w-[3px] rounded-r bg-desk-${desk}`} />
 
-      <div className="flex items-center gap-3 text-muted-foreground">
+      {/* Top line: desk badge · (Event chip if upcoming) · posted-time.
+          Share button right-aligned. Tag pills and source-type pills
+          were removed in Phase 24 to keep the card scannable. */}
+      <div className="flex items-center gap-2 text-muted-foreground">
         <DeskBadge desk={desk} />
+        {isUpcomingEvent && (
+          <span
+            className={`inline-flex items-center gap-1 rounded-full border border-[hsl(var(--desk-${desk}))]/40 bg-[hsl(var(--desk-${desk}))]/10 px-2 py-0.5 text-[0.6rem] font-mono uppercase tracking-[0.14em] text-[hsl(var(--desk-${desk}))]`}
+            title={`Upcoming event: ${formatEventRange(story.startsAt!, story.endsAt)}`}
+            data-testid={`chip-event-${story.id}`}
+          >
+            <Calendar className="h-3 w-3" />
+            Event
+          </span>
+        )}
         <span className="text-[0.68rem] font-mono uppercase tracking-[0.14em] text-muted-foreground/70">·</span>
         <time
           title={absoluteDate(story.publishedAt)}
@@ -74,28 +71,9 @@ export function StoryCard({ story, onOpen }: Props) {
         >
           {relativeTime(story.publishedAt)}
         </time>
-        {/* Share button — native Web Share sheet on mobile, copy/email/social
-            dropdown on desktop. ms-auto floats it to the right edge of the
-            card's top row without disturbing the rest of the layout. */}
         <div className="ms-auto">
           <ShareButton story={story} />
         </div>
-        {/* status pill (New / Updated / Event / Developing) intentionally
-            removed -- it duplicated the desk color and the bottom-row
-            source/event pill on every card. */}
-        {false && story.politicalScope && (
-          <>
-            <span className="text-[0.68rem] font-mono text-muted-foreground/70">·</span>
-            <span
-              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[0.62rem] font-mono uppercase tracking-[0.14em] bg-scope-${story.politicalScope} border-scope-${story.politicalScope}`}
-              title={POLITICAL_SCOPE_META[story.politicalScope as PoliticalScope]?.description}
-              data-testid={`chip-scope-${story.id}`}
-            >
-              <Scale className="h-3 w-3" />
-              {POLITICAL_SCOPE_META[story.politicalScope as PoliticalScope]?.label ?? story.politicalScope}
-            </span>
-          </>
-        )}
       </div>
 
       <h3
@@ -129,48 +107,15 @@ export function StoryCard({ story, onOpen }: Props) {
         </div>
       )}
 
+      {/* Bottom line: source link left, community feedback buttons right.
+          One row, no pills. Synthesis stories show their multi-source rail
+          in place of the single source link (the list IS the credibility
+          cue). */}
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-border/50 pt-3">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
-          {/* Source-type pill: LOCAL NEWS / OFFICIAL / EVENT */}
-          <span
-            className={`inline-flex items-center rounded-full px-2 py-0.5 text-[0.64rem] font-medium uppercase tracking-[0.1em] ${
-              SOURCE_BADGE_STYLE[story.sourceType] ?? ""
-            }`}
-            title={`Source type: ${story.sourceType}`}
-          >
-            {SOURCE_BADGE_LABEL[story.sourceType] ?? story.sourceType}
-          </span>
-          {/* Story tags as muted neutral pills, sitting alongside the source
-              pill so each card has a single "context bubbles" zone. */}
-          {tags.slice(0, 3).map((t) => (
-            <span
-              key={t}
-              className="inline-flex items-center rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[0.62rem] font-mono uppercase tracking-[0.1em] text-muted-foreground"
-            >
-              {t}
-            </span>
-          ))}
-          <span className="text-xs text-muted-foreground" data-testid={`text-source-${story.id}`}>
-            {story.sourceName}
-          </span>
-          {typeof story.sourceCount === "number" && story.sourceCount > 1 && (
-            <span
-              className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[0.64rem] font-medium text-primary"
-              title={`Reported by ${story.sourceCount} sources`}
-              data-testid={`badge-source-count-${story.id}`}
-            >
-              <Layers className="h-3 w-3" />
-              +{story.sourceCount - 1} {story.sourceCount - 1 === 1 ? "source" : "sources"}
-            </span>
-          )}
-        </div>
-
         {(story as StoryWithSourceCount).isSynthesis &&
         (story as StoryWithSourceCount).synthesisSources?.length ? (
-          // Synthesis card: link rail with each source as a text link to its
-          // own article. No logos or pills -- the list IS the credibility cue.
           <div
-            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground min-w-0"
             data-testid={`synthesis-sources-${story.id}`}
           >
             <span className="font-mono text-[0.6rem] uppercase tracking-[0.14em]">
@@ -197,18 +142,16 @@ export function StoryCard({ story, onOpen }: Props) {
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors min-w-0"
             data-testid={`link-source-${story.id}`}
           >
-            Source
-            <ExternalLink className="h-3 w-3" />
+            <span className="truncate">{story.sourceName}</span>
+            <ExternalLink className="h-3 w-3 shrink-0" />
           </a>
         )}
-      </div>
 
-      {/* Phase 24: community feedback bar. Sits at the bottom of every
-          card. Quiet by default; counts only appear when nonzero. */}
-      <div className="mt-3 flex items-center justify-end border-t border-card-border/50 pt-2">
+        {/* Phase 24: community feedback buttons. Right-aligned, inline with
+            the source link. Quiet by default; counts only render when nonzero. */}
         <FeedbackBar storyId={story.id} citySlug={(story as any).citySlug ?? undefined} />
       </div>
 
