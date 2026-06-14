@@ -80,8 +80,42 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       rebalance,
     });
     // Annotate each story with its source count so feed cards can show "+N sources".
+    // For synthesis rows, also expand synthesized_from_ids into a
+    // [{sourceName, sourceUrl}] array so the card can render the link rail.
+    const synthSourceIds = Array.from(
+      new Set(
+        result.items
+          .filter((s) => (s as any).isSynthesis)
+          .flatMap((s) => ((s as any).synthesizedFromIds ?? []) as number[]),
+      ),
+    );
+    let sourceLookup = new Map<number, { sourceName: string; sourceUrl: string }>();
+    if (synthSourceIds.length > 0) {
+      const rows = await db
+        .select({
+          id: storiesTable.id,
+          sourceName: storiesTable.sourceName,
+          sourceUrl: storiesTable.sourceUrl,
+        })
+        .from(storiesTable)
+        .where(sql`${storiesTable.id} = ANY(${synthSourceIds})`);
+      sourceLookup = new Map(
+        rows.map((r) => [r.id, { sourceName: r.sourceName ?? "", sourceUrl: r.sourceUrl ?? "" }]),
+      );
+    }
     const items = await Promise.all(
-      result.items.map(async (s) => ({ ...s, sourceCount: await storage.countStorySources(s.id) })),
+      result.items.map(async (s) => {
+        const out: any = {
+          ...s,
+          sourceCount: await storage.countStorySources(s.id),
+        };
+        if ((s as any).isSynthesis) {
+          out.synthesisSources = ((s as any).synthesizedFromIds ?? [])
+            .map((id: number) => sourceLookup.get(id))
+            .filter(Boolean);
+        }
+        return out;
+      }),
     );
     res.json({ ...result, items });
   });

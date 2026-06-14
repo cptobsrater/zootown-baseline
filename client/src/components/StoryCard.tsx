@@ -13,7 +13,12 @@ import { DeskBadge } from "./DeskBadge";
 import { ShareButton } from "./ShareButton";
 import { ExternalLink, Layers, MapPin, Scale } from "lucide-react";
 
-export type StoryWithSourceCount = Story & { sourceCount?: number };
+export type StoryWithSourceCount = Story & {
+  sourceCount?: number;
+  // Synthesis stories carry the list of original sources here so the card
+  // can render "Sources: KPAX · Missoulian · MTPR" as text links.
+  synthesisSources?: { sourceName: string; sourceUrl: string }[];
+};
 
 interface Props {
   story: StoryWithSourceCount;
@@ -159,17 +164,45 @@ export function StoryCard({ story, onOpen }: Props) {
           )}
         </div>
 
-        <a
-          href={story.sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          data-testid={`link-source-${story.id}`}
-        >
-          Source
-          <ExternalLink className="h-3 w-3" />
-        </a>
+        {(story as StoryWithSourceCount).isSynthesis &&
+        (story as StoryWithSourceCount).synthesisSources?.length ? (
+          // Synthesis card: link rail with each source as a text link to its
+          // own article. No logos or pills -- the list IS the credibility cue.
+          <div
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+            data-testid={`synthesis-sources-${story.id}`}
+          >
+            <span className="font-mono text-[0.6rem] uppercase tracking-[0.14em]">
+              Sources:
+            </span>
+            {(story as StoryWithSourceCount).synthesisSources!.map((src, i) => (
+              <span key={src.sourceUrl + i} className="inline-flex items-center gap-1">
+                {i > 0 && <span className="opacity-50">·</span>}
+                <a
+                  href={src.sourceUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="hover:text-foreground hover:underline"
+                >
+                  {src.sourceName}
+                </a>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <a
+            href={story.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            data-testid={`link-source-${story.id}`}
+          >
+            Source
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
       </div>
 
       <span className="sr-only">{deskMeta.label}</span>
