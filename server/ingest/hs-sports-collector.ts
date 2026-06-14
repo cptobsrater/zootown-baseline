@@ -44,7 +44,11 @@ function currentSeasonSlug(now: Date = new Date()): string {
 }
 
 function scheduleUrl(team: HsTeam, season: string): string {
-  return `https://www.maxpreps.com/mt/${team.citySlug}/${team.schoolSlug}/${team.sport}/${season}/schedule/`;
+  // MaxPreps: girls' sports use "/{sport}/girls/", not "/{sport}-girls/".
+  const sportPath = team.sport.endsWith("-girls")
+    ? `${team.sport.slice(0, -"-girls".length)}/girls`
+    : team.sport;
+  return `https://www.maxpreps.com/mt/${team.citySlug}/${team.schoolSlug}/${sportPath}/${season}/schedule/`;
 }
 
 interface ParsedEvent {

@@ -277,10 +277,16 @@ async function checkObitDignity(): Promise<Finding[]> {
   `)) as unknown as Array<{ id: number; headline: string; summary: string | null; source_name: string }>;
 
   const findings: Finding[] = [];
+  // Name detection accepts either "Firstname Lastname" or "Lastname, Firstname".
+  // The comma-first format is the standard newspaper convention for obit
+  // listings and is dignified — just different.
+  const FORWARD_NAME = /[A-Z][a-z]+\s+[A-Z][a-z]+/;
+  const REVERSED_NAME = /[A-Z][a-z]+,\s+[A-Z][a-z]+/;
   for (const r of rows) {
     const issues: string[] = [];
-    // Name heuristic: at least one capitalized two-word sequence in the headline.
-    if (!/[A-Z][a-z]+\s+[A-Z][a-z]+/.test(r.headline)) issues.push("no name detected in headline");
+    if (!FORWARD_NAME.test(r.headline) && !REVERSED_NAME.test(r.headline)) {
+      issues.push("no name detected in headline");
+    }
     // Truncated body: ends with " " or "." cut at a word boundary mid-sentence.
     if (r.summary && r.summary.length > 50) {
       const tail = r.summary.trim().slice(-30);
