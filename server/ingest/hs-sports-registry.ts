@@ -31,7 +31,7 @@ export const HS_SCHOOL_SEEDS: SchoolSeed[] = [
 
   // ---- Great Falls (3) ----
   { cityId: 3, schoolName: "Great Falls Bison", shortName: "Great Falls", citySlug: "great-falls", schoolSlug: "great-falls-bison" },
-  { cityId: 3, schoolName: "Great Falls CMR Rustlers", shortName: "CMR", citySlug: "great-falls", schoolSlug: "great-falls-cmr-rustlers" },
+  { cityId: 3, schoolName: "CM Russell Rustlers", shortName: "CMR", citySlug: "great-falls", schoolSlug: "russell-rustlers" },
 
   // ---- Bozeman (4) ----
   { cityId: 4, schoolName: "Bozeman Hawks", shortName: "Bozeman", citySlug: "bozeman", schoolSlug: "bozeman-hawks" },
