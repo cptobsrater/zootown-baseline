@@ -1690,5 +1690,79 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ ok: true });
   });
 
+  // ===== Phase 13: Event quarantine =====
+  // Calendar items that failed strict start-time validation. The ingester
+  // sends them here so a human can release (publish with corrected time) or
+  // reject them outright. We never want bogus times to leak onto the calendar.
+  app.get("/api/admin/event-quarantine", requireAdmin, async (req, res) => {
+    const status = (req.query.status as string | undefined) ?? "pending";
+    const allowed = ["pending", "released", "rejected"] as const;
+    const safeStatus = (allowed as readonly string[]).includes(status) ? (status as any) : "pending";
+    const items = await storage.listQuarantinedEvents(safeStatus, 200);
+    const counts = await storage.countQuarantinedByStatus();
+    res.json({ items, counts });
+  });
+
+  app.post("/api/admin/event-quarantine/:id/review", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    const { eventQuarantineReviewSchema } = await import("../shared/schema.js");
+    const parsed = eventQuarantineReviewSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const row = await storage.getQuarantinedEvent(id);
+    if (!row) return res.status(404).json({ error: "Not found" });
+    if (row.status !== "pending") {
+      return res.status(409).json({ error: "already_reviewed", status: row.status });
+    }
+
+    const now = new Date().toISOString();
+    const adminId = (req as any).adminId ?? "admin";
+
+    if (parsed.data.action === "reject") {
+      await storage.updateQuarantinedEvent(id, {
+        status: "rejected",
+        reviewer: adminId,
+        reviewedAt: now,
+        reviewerNote: parsed.data.reviewerNote ?? null,
+      });
+      res.json({ ok: true });
+      return;
+    }
+
+    // release path: must have a usable start time. Prefer admin-supplied
+    // correctedStartsAt; fall back to the candidate the ingester captured.
+    const startsAt = parsed.data.correctedStartsAt ?? row.candidateStartsAt ?? null;
+    if (!startsAt) {
+      return res.status(400).json({ error: "no_start_time_supplied" });
+    }
+    const startMs = Date.parse(startsAt);
+    if (!Number.isFinite(startMs)) {
+      return res.status(400).json({ error: "unparseable_start_time" });
+    }
+
+    const desk = parsed.data.correctedDesk ?? "entertainment";
+    const created = await storage.createEvent({
+      title: row.headline.slice(0, 220),
+      venue: row.venue ?? row.sourceName,
+      startsAt: new Date(startMs).toISOString(),
+      endsAt: null,
+      sourceName: row.sourceName,
+      sourceUrl: row.sourceUrl,
+      tag: "Event",
+      desk,
+      description: row.summary,
+      cityId: row.cityId ?? null,
+    });
+    await storage.updateQuarantinedEvent(id, {
+      status: "released",
+      reviewer: adminId,
+      reviewedAt: now,
+      reviewerNote: parsed.data.reviewerNote ?? null,
+      releasedStoryId: created.id,
+    });
+    res.json({ ok: true, storyId: created.id });
+  });
+
   return httpServer;
 }

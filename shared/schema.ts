@@ -822,6 +822,49 @@ export const synthesisReviewSchema = z.object({
 });
 export type SynthesisReviewInput = z.infer<typeof synthesisReviewSchema>;
 
+// Quarantine for events that fail strict start-time validation. Surfaced
+// in /admin/event-quarantine so a human can release or reject. We never
+// let a bad start-time leak into the public calendar.
+export const EVENT_QUARANTINE_STATUSES = [
+  "pending",   // sitting in queue waiting for review
+  "released", // admin approved -> moved to events with a corrected time
+  "rejected", // admin discarded
+] as const;
+export type EventQuarantineStatus = (typeof EVENT_QUARANTINE_STATUSES)[number];
+
+export const eventQuarantine = pgTable("event_quarantine", {
+  id: serial("id").primaryKey(),
+  sourceUrl: text("source_url").notNull(),
+  sourceName: text("source_name").notNull(),
+  headline: text("headline").notNull(),
+  summary: text("summary").notNull(),
+  venue: text("venue"),
+  rawTimeText: text("raw_time_text"),
+  candidateStartsAt: timestamp("candidate_starts_at", { mode: "string", withTimezone: true }),
+  cityId: integer("city_id"),
+  reason: text("reason").notNull(),
+  status: text("status").$type<EventQuarantineStatus>().notNull().default("pending"),
+  reviewer: text("reviewer"),
+  reviewedAt: timestamp("reviewed_at", { mode: "string", withTimezone: true }),
+  reviewerNote: text("reviewer_note"),
+  releasedStoryId: integer("released_story_id"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EventQuarantineRow = typeof eventQuarantine.$inferSelect;
+export type InsertEventQuarantine = typeof eventQuarantine.$inferInsert;
+
+/** Admin review payload for /api/admin/event-quarantine/:id. */
+export const eventQuarantineReviewSchema = z.object({
+  action: z.enum(["release", "reject"]),
+  reviewerNote: z.string().max(500).optional(),
+  // When releasing, admin can supply a corrected ISO start time.
+  correctedStartsAt: z.string().min(1).max(40).optional(),
+  correctedDesk: z.string().min(1).max(40).optional(),
+});
+export type EventQuarantineReviewInput = z.infer<typeof eventQuarantineReviewSchema>;
+
 export type Sponsor = typeof sponsors.$inferSelect;
 export type InsertSponsor = typeof sponsors.$inferInsert;
 export type SponsorCity = typeof sponsorCities.$inferSelect;

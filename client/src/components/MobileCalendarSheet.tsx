@@ -80,7 +80,7 @@ export function MobileCalendarSheet({ open, onOpenChange }: Props) {
 
   const [anchor, setAnchor] = useState<Date>(() => startOfMonth(new Date()));
   const [selectedDay, setSelectedDay] = useState<Date | null>(() => startOfDay(new Date()));
-  const [activeDesks, setActiveDesks] = useState<Set<DeskFilter>>(new Set(["all"]));
+  const [activeDesks, setActiveDesks] = useState<Set<DeskFilter>>(new Set<DeskFilter>(["all"]));
   const [filterOpen, setFilterOpen] = useState(false);
 
   // Lock body scroll while the sheet is open
@@ -123,7 +123,7 @@ export function MobileCalendarSheet({ open, onOpenChange }: Props) {
       arr.push(e);
       m.set(k, arr);
     }
-    for (const arr of m.values()) arr.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+    Array.from(m.values()).forEach((arr: EventItem[]) => arr.sort((a: EventItem, b: EventItem) => a.startsAt.localeCompare(b.startsAt)));
     return m;
   }, [events]);
 
@@ -134,12 +134,12 @@ export function MobileCalendarSheet({ open, onOpenChange }: Props) {
 
   function toggleDesk(id: DeskFilter) {
     setActiveDesks((prev) => {
-      const next = new Set(prev);
-      if (id === "all") return new Set(["all"]);
+      const next = new Set<DeskFilter>(prev);
+      if (id === "all") return new Set<DeskFilter>(["all"]);
       next.delete("all");
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      if (next.size === 0) return new Set(["all"]);
+      if (next.size === 0) return new Set<DeskFilter>(["all"]);
       return next;
     });
   }

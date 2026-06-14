@@ -5,6 +5,8 @@ import { htmlFetcher } from "./html.js";
 import { headlessFetcher } from "./headless.js";
 import { canonicalizeUrl, toInsertStory, shouldSkipItem } from "./normalize.js";
 import { matchRules } from "../learning/live-rules-cache.js";
+import { validateEventTime } from "../learning/event-time-validator.js";
+import { classifyEvent } from "../learning/event-classifier.js";
 import { pollXList } from "./x-fetcher.js";
 import { processXSignals } from "./x-signal-processor.js";
 import { applyClassificationRules, bumpHitCounts } from "./rules.js";
@@ -130,10 +132,8 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
           continue;
         }
         // Calendar events MUST have a real start time. If we can't parse one
-        // from the summary/headline OR the feed-provided publishedAt, skip
-        // this item entirely. Better to have an empty calendar than to fill
-        // it with bogus "7 days from now" placeholders.
-        // Also check the headline since some calendar feeds put the date there.
+        // from the summary/headline OR the feed-provided publishedAt, the
+        // event is quarantined for human review instead of dropped silently.
         const parsedFromText = parseEventDate(item.summary, undefined)
           ?? parseEventDate(item.title, undefined);
         // Only trust publishedAt as a fallback if it's in the future (i.e. the
@@ -146,19 +146,65 @@ export async function ingestSource(source: Source): Promise<RunSummary> {
             startsAt = new Date(t).toISOString();
           }
         }
-        if (!startsAt) {
-          duplicates++; // (re-use the counter; we just want to not add)
+
+        // Strict validation: red-flag wording (TBD/see website/etc.),
+        // midnight fallback, past dates, or no parsed time -> quarantine.
+        const validation = validateEventTime({
+          startsAt,
+          rawTimeText: item.summary ?? null,
+          headline: item.title,
+          summary: item.summary ?? "",
+        });
+
+        if (!validation.ok) {
+          // Send to the quarantine queue so admin can review or correct it.
+          try {
+            await storage.createQuarantinedEvent({
+              sourceUrl: canonicalEv,
+              sourceName: source.name,
+              headline: item.title.slice(0, 300),
+              summary: (item.summary ?? "").slice(0, 4000),
+              venue: extractVenue(item.summary) ?? null,
+              rawTimeText: item.summary ?? null,
+              candidateStartsAt: startsAt ?? null,
+              cityId: source.cityId ?? null,
+              reason: validation.reason,
+            });
+          } catch (e) {
+            // If quarantine insert fails (e.g. duplicate source_url unique?),
+            // fall through and treat as a dup. We never publish without
+            // confidence on the time.
+          }
+          duplicates++;
           continue;
         }
+
+        // Time passed validation. Now run the desk classifier to override
+        // the source-level default desk if a more specific category fits.
+        // skipGemini=true to keep ingest fast; the rule layer catches the
+        // obvious overrides (police, sports, civic, etc.).
+        const deskResult = await classifyEvent(
+          {
+            headline: item.title,
+            summary: item.summary ?? "",
+            venue: extractVenue(item.summary) ?? source.name,
+            sourceName: source.name,
+          },
+          { skipGemini: true },
+        );
+        // Use the classifier's desk only when a rule fired. Otherwise keep
+        // the per-source calendarDesk (which is curated upstream).
+        const finalDesk = deskResult.confidence === "rule" ? deskResult.desk : calendarDesk;
+
         await storage.createEvent({
           title: item.title.slice(0, 220),
           venue: extractVenue(item.summary) ?? source.name,
-          startsAt,
+          startsAt: validation.startsAt,
           endsAt: null,
           sourceName: source.name,
           sourceUrl: canonicalEv,
           tag: "Event",
-          desk: calendarDesk,
+          desk: finalDesk,
           description: item.summary ?? null,
           cityId: source.cityId ?? null,
         });

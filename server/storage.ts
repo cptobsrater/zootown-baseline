@@ -12,6 +12,7 @@ import {
   feedback,
   storyDeletions,
   sponsors, sponsorCities,
+  eventQuarantine,
   buildFilterSignature,
 } from "../shared/schema.js";
 import type {
@@ -49,6 +50,9 @@ import type {
   SponsorCity,
   SponsorWithCities,
   SponsorEditInput,
+  EventQuarantineRow,
+  InsertEventQuarantine,
+  EventQuarantineStatus,
 } from "../shared/schema.js";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -1725,6 +1729,51 @@ export class DatabaseStorage implements IStorage {
     // sponsor_cities cascades on delete, so we only need to remove the parent.
     const result = await db.delete(sponsors).where(eq(sponsors.id, id));
     return ((result as any)?.rowCount ?? 0) > 0;
+  }
+
+  // ----- Event quarantine -----
+  // Holds calendar items that failed strict start-time validation. Admins
+  // release them (with a corrected time) or reject them outright.
+
+  async createQuarantinedEvent(input: InsertEventQuarantine): Promise<EventQuarantineRow> {
+    const [row] = await db.insert(eventQuarantine).values(input).returning();
+    return row;
+  }
+
+  async listQuarantinedEvents(status: EventQuarantineStatus = "pending", limit = 100): Promise<EventQuarantineRow[]> {
+    const rows = await db
+      .select()
+      .from(eventQuarantine)
+      .where(eq(eventQuarantine.status, status))
+      .orderBy(desc(eventQuarantine.createdAt))
+      .limit(limit);
+    return rows;
+  }
+
+  async getQuarantinedEvent(id: number): Promise<EventQuarantineRow | undefined> {
+    const rows = await db.select().from(eventQuarantine).where(eq(eventQuarantine.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async updateQuarantinedEvent(
+    id: number,
+    patch: Partial<Pick<EventQuarantineRow, "status" | "reviewer" | "reviewedAt" | "reviewerNote" | "releasedStoryId">>,
+  ): Promise<EventQuarantineRow | undefined> {
+    const [row] = await db
+      .update(eventQuarantine)
+      .set({ ...patch, updatedAt: new Date().toISOString() } as any)
+      .where(eq(eventQuarantine.id, id))
+      .returning();
+    return row;
+  }
+
+  async countQuarantinedByStatus(): Promise<Record<EventQuarantineStatus, number>> {
+    const rows = (await db.execute(
+      sql`SELECT status, COUNT(*)::int AS count FROM event_quarantine GROUP BY status`,
+    )) as unknown as { status: EventQuarantineStatus; count: number }[];
+    const out: Record<EventQuarantineStatus, number> = { pending: 0, released: 0, rejected: 0 };
+    for (const r of rows) out[r.status] = r.count;
+    return out;
   }
 }
 

@@ -29,6 +29,9 @@ function initialViewForViewport(): ViewMode {
   return window.matchMedia("(max-width: 640px)").matches ? "agenda" : "month";
 }
 
+// Calendar-allowed desks only. 'people' and 'history' are evergreen content
+// types that never have a real start time, so they don't belong on the
+// calendar UI. The ingester also refuses to assign these to events.
 const DESK_ORDER: DeskId[] = [
   "city",
   "business",
@@ -36,8 +39,6 @@ const DESK_ORDER: DeskId[] = [
   "sports",
   "health",
   "entertainment",
-  "people",
-  "history",
 ];
 
 function startOfDay(d: Date): Date {
@@ -103,7 +104,7 @@ export default function CalendarPage() {
 
   const [anchor, setAnchor] = useState<Date>(() => startOfMonth(new Date()));
   const [view, setView] = useState<ViewMode>(initialViewForViewport);
-  const [activeDesks, setActiveDesks] = useState<Set<DeskFilter>>(new Set(["all"]));
+  const [activeDesks, setActiveDesks] = useState<Set<DeskFilter>>(new Set<DeskFilter>(["all"]));
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventItem | null>(null);
 
@@ -133,9 +134,9 @@ export default function CalendarPage() {
       arr.push(e);
       map.set(key, arr);
     }
-    for (const arr of map.values()) {
-      arr.sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-    }
+    Array.from(map.values()).forEach((arr: EventItem[]) => {
+      arr.sort((a: EventItem, b: EventItem) => a.startsAt.localeCompare(b.startsAt));
+    });
     return map;
   }, [events]);
 
@@ -176,12 +177,12 @@ export default function CalendarPage() {
 
   function toggleDesk(id: DeskFilter) {
     setActiveDesks((prev) => {
-      const next = new Set(prev);
-      if (id === "all") return new Set(["all"]);
+      const next = new Set<DeskFilter>(prev);
+      if (id === "all") return new Set<DeskFilter>(["all"]);
       next.delete("all");
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      if (next.size === 0) return new Set(["all"]);
+      if (next.size === 0) return new Set<DeskFilter>(["all"]);
       return next;
     });
   }
