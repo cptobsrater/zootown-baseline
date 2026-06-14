@@ -181,15 +181,31 @@ function resolveIso(
 }
 
 function parseEvents(visibleText: string, fbPageEventsUrl: string): RawFacebookEvent[] {
-  // Trim everything before "Upcoming" -- Facebook puts nav + page meta first.
-  const idx = visibleText.indexOf("Upcoming");
-  const body = idx >= 0 ? visibleText.slice(idx) : visibleText;
-  // Drop the trailing login form.
+  // Facebook duplicates the tab nav, so the raw visible text reads:
+  //   ... Posts About Reels Photos More Posts About Reels Photos
+  //   MetraPark Events Upcoming Past More Upcoming Past Sun, Jun 14 ...
+  // Slicing at the FIRST "Upcoming" / FIRST "Past" therefore chops out
+  // every event card. We anchor on the LAST "Upcoming" before the events
+  // begin, then bound the trailing range with the first occurrence of
+  // "See more on Facebook" (which lives below the cards).
+  const lastUpcoming = visibleText.lastIndexOf("Upcoming");
+  const body = lastUpcoming >= 0 ? visibleText.slice(lastUpcoming) : visibleText;
   const endIdx = body.indexOf("See more on Facebook");
   const trimmed = endIdx > 0 ? body.slice(0, endIdx) : body;
 
-  // Split on "Past" -- we only want upcoming events, not past ones.
-  const upcomingOnly = trimmed.split(/\bPast\b/)[0] ?? trimmed;
+  // Inside the upcoming window we still want to stop when we hit "Past"
+  // (the past-events section starts here). Use lastIndexOf -- but only
+  // accept it if it falls AFTER the first event header, otherwise it's
+  // still the nav tab label.
+  const dayHeaderRe = /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s+(?:\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2})\b/;
+  const firstHeader = trimmed.search(dayHeaderRe);
+  let upcomingOnly = trimmed;
+  if (firstHeader >= 0) {
+    const pastIdx = trimmed.lastIndexOf("Past");
+    if (pastIdx > firstHeader) {
+      upcomingOnly = trimmed.slice(0, pastIdx);
+    }
+  }
 
   // Now cut at each day-of-week header.
   const parts = upcomingOnly.split(EVENT_SPLIT_RE).map((s) => s.trim()).filter(Boolean);
