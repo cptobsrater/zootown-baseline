@@ -53,21 +53,31 @@ interface EnrichmentOutputs {
 
 /** Pure computation: classifiers + scorer, no DB writes. */
 export function computeEnrichment(row: StoryRow): EnrichmentOutputs {
-  const sports = classifySports({
-    headline: row.headline,
-    summary: row.summary,
-    desk: row.desk,
-  });
-  const people = classifyPeople({
-    headline: row.headline,
-    summary: row.summary,
-  });
-  const obit = classifyObituary({
-    headline: row.headline,
-    summary: row.summary,
-    sourceUrl: row.sourceUrl,
-    sourceName: row.sourceName,
-  });
+  // Calendar events are skipped by sports/people/obit classifiers --
+  // they're forward-looking listings, not retrospective reports of who
+  // won / who was honored / who passed.
+  const isCalendarEvent = !!row.onCalendar;
+  const sports = isCalendarEvent
+    ? { isSportsRecap: false, teamsWon: [], teamsLost: [], level: null, hasLocalWin: false }
+    : classifySports({
+        headline: row.headline,
+        summary: row.summary,
+        desk: row.desk,
+      });
+  const people = isCalendarEvent
+    ? { isPeopleProfile: false, scope: null, subject: null, alsoSports: false }
+    : classifyPeople({
+        headline: row.headline,
+        summary: row.summary,
+      });
+  const obit = isCalendarEvent
+    ? { isObituary: false }
+    : classifyObituary({
+        headline: row.headline,
+        summary: row.summary,
+        sourceUrl: row.sourceUrl,
+        sourceName: row.sourceName,
+      });
 
   const score = scoreStory({
     publishedAt: row.publishedAt,

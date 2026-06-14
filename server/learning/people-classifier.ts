@@ -180,6 +180,33 @@ function extractSubject(headline: string): string | null {
   return candidate;
 }
 
+// Montana relevance gate. A people-profile story must mention Montana,
+// one of our 10 cities, an MT team, an MT institution, or a name that
+// appears elsewhere in our system. Without this gate, wire-service
+// reposts of national news ("Lewis Hamilton wins Grand Prix") were
+// flooding the People desk. We require explicit local signal.
+const MT_LOCAL_TOKENS = [
+  "montana", " mt ", " mt,", " mt.", " mt's",
+  "missoula", "billings", "great falls", "bozeman", "butte",
+  "helena", "kalispell", "havre", "whitefish", "laurel",
+  "big sky", "flathead", "yellowstone", "glacier", "gallatin",
+  "university of montana", "montana state university", "msu ", "griz", "bobcat",
+  "carroll college", "montana tech", "rocky mountain college",
+  "hellgate", "sentinel", "skyview", "senior high", "capital high",
+  "c.m. russell", "cmr", "bozeman high", "butte high",
+  "mhsa", "frontier conference", "pioneer league",
+  "mustangs", "paddleheads", "range riders",
+  "belgrade", "livingston", "hamilton", "ronan", "polson", "dillon",
+  "sidney", "glasgow", "glendive", "miles city", "lewistown",
+  "plenty coups", "crow tribe", "blackfeet", "flathead reservation",
+  "fort peck", "rocky boy", "northern cheyenne",
+];
+
+function hasMontanaSignal(text: string): boolean {
+  const lc = ` ${text.toLowerCase()} `; // surround with spaces for word-boundary tokens
+  return MT_LOCAL_TOKENS.some((tok) => lc.includes(tok));
+}
+
 export function classifyPeople(input: {
   headline: string;
   summary?: string | null;
@@ -207,6 +234,13 @@ export function classifyPeople(input: {
   const hasPositiveVerb = POSITIVE_VERBS.some((v) => lc.includes(v));
 
   if (!hasProfileHint && !hasPositiveVerb) return empty;
+
+  // Montana-relevance gate. Wire-service reposts of national news
+  // (Lewis Hamilton, Donald Trump, Le Mans, etc.) often have positive
+  // verbs and extractable names. We require explicit local signal --
+  // mention of MT, a MT city, an MT team, an MT institution, or an MT
+  // tribal nation -- before treating the story as a local profile.
+  if (!hasMontanaSignal(text)) return { ...empty, reason: "no_mt_signal" };
 
   // Subject extraction. Profile hints can fire without a name (e.g. "Local
   // hometown hero..."), but the most common positive case has a name.
