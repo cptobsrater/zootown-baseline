@@ -8,6 +8,7 @@ import { storage, db } from "../../server/storage.js";
 import { ingestSource } from "../../server/ingest/ingester.js";
 import { pollXList, MONTANA_LIST_ID } from "../../server/ingest/x-fetcher.js";
 import { processXSignals } from "../../server/ingest/x-signal-processor.js";
+import { buildClusters } from "../../server/learning/cluster-builder.js";
 import { xListCursor } from "../../shared/schema.js";
 import { eq } from "drizzle-orm";
 
@@ -87,6 +88,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    // ---- Cluster builder ----
+    // Always runs (cheap, no external API calls). Reads recent stories + tweets,
+    // groups by topic signature, scores the four axes, writes verdicts. The
+    // synthesizer (next phase) reads cluster rows to decide what to publish.
+    let clusterSummary: Awaited<ReturnType<typeof buildClusters>> | null = null;
+    try {
+      clusterSummary = await buildClusters();
+    } catch (err: any) {
+      console.error("[cron/ingest] cluster builder failed:", err);
+    }
+
     // ---- RSS sources next ----
     // Bounded by a soft deadline so we never blow the 60s function limit.
     // Leave 5s of headroom before Vercel kills us; any source still pending
@@ -116,6 +128,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       skippedForTime,
       results,
       x,
+      clusters: clusterSummary,
     });
   } catch (err: any) {
     console.error("[cron/ingest] error:", err);

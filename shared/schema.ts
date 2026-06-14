@@ -704,6 +704,60 @@ export type XListCursor = typeof xListCursor.$inferSelect;
 export type XTweet = typeof xTweets.$inferSelect;
 export type InsertXTweet = typeof xTweets.$inferInsert;
 
+// ============================================================================
+// CLUSTERING -- Phase 11. See server/learning/cluster-builder.ts for the
+// algorithm. Migration: 0009_clusters.sql
+// ============================================================================
+
+export const CLUSTER_VERDICTS = [
+  "auto_publish", // synthesizer runs unattended
+  "review",       // synthesizer runs but the synth lands in review queue
+  "suppress",     // cluster suppressed entirely (wire-service / federal politics)
+] as const;
+export type ClusterVerdict = (typeof CLUSTER_VERDICTS)[number];
+
+export const clusters = pgTable("clusters", {
+  id: serial("id").primaryKey(),
+  topicSignature: text("topic_signature").notNull(),
+  // bucket_day stored as date string (YYYY-MM-DD) for cross-day uniqueness.
+  bucketDay: text("bucket_day").notNull(),
+  cityId: integer("city_id"),
+  diversityScore: numeric("diversity_score", { precision: 3, scale: 2 }).notNull().default("0"),
+  montanaLocality: numeric("montana_locality", { precision: 3, scale: 2 }).notNull().default("0"),
+  politicalToxicity: numeric("political_toxicity", { precision: 3, scale: 2 }).notNull().default("0"),
+  distinctAuthors: integer("distinct_authors").notNull().default(0),
+  verdict: text("verdict").$type<ClusterVerdict>().notNull().default("review"),
+  verdictReason: text("verdict_reason"),
+  synthesisStoryId: integer("synthesis_story_id"),
+  firstSeenAt: timestamp("first_seen_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const clusterMembers = pgTable("cluster_members", {
+  clusterId: integer("cluster_id").notNull(),
+  refType: text("ref_type").notNull(), // 'story' | 'x_tweet'
+  refId: text("ref_id").notNull(),
+  authorKey: text("author_key").notNull(),
+  addedAt: timestamp("added_at", { mode: "string", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type Cluster = typeof clusters.$inferSelect;
+export type InsertCluster = typeof clusters.$inferInsert;
+export type ClusterMember = typeof clusterMembers.$inferSelect;
+export type InsertClusterMember = typeof clusterMembers.$inferInsert;
+
 export type Sponsor = typeof sponsors.$inferSelect;
 export type InsertSponsor = typeof sponsors.$inferInsert;
 export type SponsorCity = typeof sponsorCities.$inferSelect;
