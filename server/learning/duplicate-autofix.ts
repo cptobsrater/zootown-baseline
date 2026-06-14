@@ -122,7 +122,8 @@ export async function autofixDuplicates(): Promise<AutofixReport> {
 
     // We're a go. Earliest story is canonical; reject the rest.
     const [canonical, ...losers] = rows;
-    const loserIds = losers.map((r) => r.id);
+    const loserIds = losers.map((r) => r.id).filter((n) => Number.isFinite(n));
+    if (loserIds.length === 0) continue;
 
     await db.execute(
       sql.raw(`
@@ -138,13 +139,18 @@ export async function autofixDuplicates(): Promise<AutofixReport> {
     // editorial trail records the merge. We DON'T set is_synthesis=true
     // because the canonical wasn't actually a multi-source synthesis \u2014
     // it just absorbed near-identical reposts.
-    await db.execute(sql`
-      UPDATE stories
-      SET synthesized_from_ids = array_cat(synthesized_from_ids, ${loserIds as any}),
-          is_reviewed = true,
-          reviewed_at = NOW()::text
-      WHERE id = ${canonical.id}
-    `);
+    // Drizzle's array param expansion breaks UNNEST/array_cat (Phase-15
+    // pattern). Inline the integer literals via sql.raw; loserIds are
+    // already validated as Number.isFinite via the cluster row hydration.
+    await db.execute(
+      sql.raw(`
+        UPDATE stories
+        SET synthesized_from_ids = array_cat(synthesized_from_ids, ARRAY[${loserIds.join(",")}]::integer[]),
+            is_reviewed = true,
+            reviewed_at = NOW()::text
+        WHERE id = ${canonical.id}
+      `),
+    );
 
     // Mark the audit finding fixed with a note.
     const noteAction = `Auto-fixed: kept #${canonical.id}, rejected ${loserIds.map((i) => `#${i}`).join(", ")}.`;
