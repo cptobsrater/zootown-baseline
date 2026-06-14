@@ -10,7 +10,9 @@ import { pollXList, MONTANA_LIST_ID } from "../../server/ingest/x-fetcher.js";
 import { processXSignals } from "../../server/ingest/x-signal-processor.js";
 import { buildClusters } from "../../server/learning/cluster-builder.js";
 import { runSynthesizer } from "../../server/learning/synthesizer.js";
-import { tickVenueIngest } from "../../server/ingest/venues/venue-ingester.js";
+// Venue ingest moved to its own cron (/api/cron/venue-ingest) so its
+// HTTP fan-out doesn't squeeze RSS/X/cluster/synthesis inside the 60s
+// function budget.
 import { xListCursor } from "../../shared/schema.js";
 import { eq } from "drizzle-orm";
 
@@ -134,18 +136,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // ---- Curated venue ingest (Phase 14) ----
-    // Runs at most once per ~20h per venue. Pulls each venue's website
-    // events first (RSS + JSON-LD on The Newberry; FB visible-text on
-    // MetraPark), merges with the Facebook events tab where applicable,
-    // and routes through the Phase 13 strict validator + classifier.
-    let venues: Awaited<ReturnType<typeof tickVenueIngest>> | null = null;
-    try {
-      venues = await tickVenueIngest();
-    } catch (err: any) {
-      console.error("[cron/ingest] venue ingest failed:", err);
-    }
-
     res.json({
       ok: true,
       checked: sources.length,
@@ -155,7 +145,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       x,
       clusters: clusterSummary,
       synthesis: synthSummary,
-      venues,
     });
   } catch (err: any) {
     console.error("[cron/ingest] error:", err);

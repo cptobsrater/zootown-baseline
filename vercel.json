@@ -17,6 +17,7 @@
   ],
   "crons": [
     { "path": "/api/cron/ingest", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/venue-ingest", "schedule": "0 * * * *" },
     { "path": "/api/cron/daily-writer", "schedule": "0 8 * * *" },
     { "path": "/api/cron/rotate-history", "schedule": "0 9 * * 1" }
   ],
@@ -25,6 +26,7 @@
     "api/story-preview.ts": { "maxDuration": 10 },
     "api/og-image.ts": { "maxDuration": 15 },
     "api/cron/ingest.ts": { "maxDuration": 60 },
+    "api/cron/venue-ingest.ts": { "maxDuration": 90 },
     "api/cron/daily-writer.ts": { "maxDuration": 30 },
     "api/cron/rotate-history.ts": { "maxDuration": 30 }
   }
