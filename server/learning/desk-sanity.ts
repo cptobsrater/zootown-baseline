@@ -24,7 +24,10 @@ import { sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { db } from "../storage.js";
 
-const GEMINI_MODEL = "gemini-1.5-flash";
+// Use the stable flash latest pointer so we don't have to chase model name
+// changes. gemini-1.5-flash was retired; gemini-flash-latest currently
+// resolves to a 2.x flash variant.
+const GEMINI_MODEL = "gemini-flash-latest";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 const BATCH_SIZE = 10;
 const CONFIDENCE_THRESHOLD = 0.75;

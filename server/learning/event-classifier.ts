@@ -154,7 +154,7 @@ async function classifyWithGemini(input: EventInput): Promise<EventDesk | null> 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) return null;
   const userText = `Title: ${input.headline}\nSummary: ${input.summary}\nVenue: ${input.venue ?? ""}\nSource: ${input.sourceName ?? ""}`;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
   const body = {
     system_instruction: { parts: [{ text: GEMINI_DESK_PROMPT }] },
     contents: [{ role: "user", parts: [{ text: userText }] }],

@@ -31,7 +31,7 @@ import {
 import type { Cluster } from "../../shared/schema.js";
 import { eq, and, inArray, isNull, sql } from "drizzle-orm";
 
-const GEMINI_MODEL = "gemini-1.5-flash";
+const GEMINI_MODEL = "gemini-flash-latest";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
 const VALID_DESKS = [
