@@ -42,6 +42,7 @@
     "api/cron/hs-sports.ts": { "maxDuration": 120 },
     "api/cron/desk-sanity.ts": { "maxDuration": 120 },
     "api/cron/athlete-enrichment.ts": { "maxDuration": 120 },
-    "api/cron/autofix-dupes.ts": { "maxDuration": 120 }
+    "api/cron/autofix-dupes.ts": { "maxDuration": 120 },
+    "api/cron/retire-health.ts": { "maxDuration": 300 }
   }
 }

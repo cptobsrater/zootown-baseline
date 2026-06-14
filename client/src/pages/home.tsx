@@ -5,6 +5,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useCity } from "@/lib/city-context";
 import { TopBar } from "@/components/TopBar";
 import { RightRail } from "@/components/RightRail";
+import { MobileTopStories } from "@/components/MobileTopStories";
 import { StoryCard, StoryCardSkeleton } from "@/components/StoryCard";
 import { Fragment } from "react";
 import { useLocation, useRoute } from "wouter";
@@ -83,8 +84,10 @@ interface HistoryStory {
   lastBumpedAt: string;
 }
 
+// Health retired June 14 2026; still accepts ?desk=health if a deep-link
+// is followed but the URL is normalized to 'all' on read.
 const VALID_DESKS = [
-  "all", "city", "business", "crime", "sports", "health",
+  "all", "city", "business", "crime", "sports",
   "entertainment", "people", "history",
 ] as const;
 
@@ -484,6 +487,18 @@ export default function Home() {
       <main className="mx-auto w-full max-w-[1400px] px-4 py-6 md:px-6 md:py-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_340px] xl:gap-8">
           <section aria-label="Live feed">
+            {/* Phase 29: mobile-only Top Stories above the chronological feed.
+                Hidden on lg+ where the right rail does the same job. */}
+            <div className="mb-4">
+              <MobileTopStories
+                onOpenStory={setSelected}
+                activeDesk={
+                  selectedDesks.size === 1
+                    ? (selectedDesks.values().next().value as DeskId)
+                    : "all"
+                }
+              />
+            </div>
             {/*
               Section heading ("Business Desk · 4 posts") removed so the first
               card lines up flush with the top of the Top Stories sidebar.
@@ -663,7 +678,14 @@ export default function Home() {
 
           <div className="lg:block">
             <div className="sticky top-[128px]">
-              <RightRail onOpenStory={setSelected} />
+              <RightRail
+                onOpenStory={setSelected}
+                activeDesk={
+                  selectedDesks.size === 1
+                    ? (selectedDesks.values().next().value as DeskId)
+                    : "all"
+                }
+              />
             </div>
           </div>
         </div>

@@ -29,9 +29,13 @@ export const CITY_SLUGS = [
 export type CitySlug = (typeof CITY_SLUGS)[number];
 
 // Desk identifiers — EXACT ORDER matters for UI tabs
-export const DESKS = ["city", "business", "crime", "sports", "health", "entertainment", "people", "history"] as const;
+export const DESKS = ["city", "business", "crime", "sports", "entertainment", "people", "history"] as const;
 export type Desk = (typeof DESKS)[number];
-export const RETIRED_DESKS = ["politics", "science_tech", "events"] as const;
+// Desks we no longer surface in the public nav. Stories on these desks remain
+// in the DB but won't appear in feeds, filters, or the right-rail. They can
+// still be inspected from the admin cockpit (mod_state filter shows them).
+// 'health' retired June 14 2026 — see Phase 29 retire-health pass.
+export const RETIRED_DESKS = ["politics", "science_tech", "events", "health"] as const;
 export type RetiredDesk = (typeof RETIRED_DESKS)[number];
 
 export const POLITICAL_SCOPES = ["local", "state", "national"] as const;

@@ -1418,9 +1418,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(await storage.getTrendingTags(10, cityId));
   });
 
+  // Phase 29: top stories. Accepts ?city= and ?desk= (all|<deskId>).
+  // all view -> one story per desk (up to 7). single-desk view -> top 5 in that desk.
   app.get("/api/top-stories", async (req, res) => {
     const cityId = await resolveCityId(typeof req.query.city === "string" ? req.query.city : undefined);
-    res.json(await storage.getTopStories(6, cityId));
+    const deskParam = typeof req.query.desk === "string" ? req.query.desk : "all";
+    const isSingle = deskParam !== "all";
+    const limit = isSingle ? 5 : 7;
+    res.json(await storage.getTopStories(limit, cityId, deskParam));
   });
 
   // ----- Ingestion pipeline -----

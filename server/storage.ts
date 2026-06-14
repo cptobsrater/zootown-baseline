@@ -421,7 +421,7 @@ export interface IStorage {
   recordIngestRun(run: Omit<IngestRun, "id">): Promise<IngestRun>;
   listIngestRuns(limit?: number, cityId?: number): Promise<IngestRun[]>;
   getTrendingTags(limit?: number, cityId?: number): Promise<Array<{ tag: string; count: number }>>;
-  getTopStories(limit?: number, cityId?: number): Promise<Story[]>;
+  getTopStories(limit?: number, cityId?: number, desk?: string | null): Promise<Story[]>;
   updateStoryFields(id: number, fields: Partial<Pick<Story, "headline" | "summary" | "desk" | "sourceUrl" | "sourceName" | "venue" | "startsAt" | "endsAt" | "onCalendar">>): Promise<Story | undefined>;
   markStoryReviewed(id: number, reviewed: boolean): Promise<Story | undefined>;
   // Pin / unpin a story. true = pin now (sets pinned_at = now()),
@@ -569,6 +569,10 @@ export class DatabaseStorage implements IStorage {
     // can find and fix them; everywhere else we hide future timestamps.
     if (modState === "approved") {
       conditions.push(sql`${stories.publishedAt}::timestamptz <= now() + interval '5 minutes'`);
+      // Retired desks are hidden from the public feed. Their rows stay in
+      // the DB as training data; the admin cockpit can still see them.
+      // 'health' retired June 14 2026.
+      conditions.push(sql`${stories.desk} NOT IN ('health')`);
     }
     if (needle) {
       conditions.push(sql`(lower(${stories.headline}) LIKE ${needle} OR lower(${stories.summary}) LIKE ${needle} OR lower(${stories.tags}) LIKE ${needle} OR lower(coalesce(${stories.location}, '')) LIKE ${needle})`);
@@ -956,31 +960,67 @@ export class DatabaseStorage implements IStorage {
       .slice(0, limit);
   }
 
-  async getTopStories(limit = 6, cityId?: number): Promise<Story[]> {
-    const windowStart = new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString();
-    const rows = cityId
-      ? await db.execute(sql`
-          SELECT * FROM stories
-          WHERE mod_state = 'approved' AND published_at > ${windowStart} AND city_id = ${cityId}
-          ORDER BY
-            CASE risk_level WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
-            published_at DESC
-          LIMIT 200
-        `)
-      : await db.execute(sql`
-          SELECT * FROM stories
-          WHERE mod_state = 'approved' AND published_at > ${windowStart}
-          ORDER BY
-            CASE risk_level WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
-            published_at DESC
-          LIMIT 200
-        `);
+  /**
+   * Top stories (Phase 29).
+   *
+   * Two modes:
+   *   - desk='all' (default): one story per active desk, ranked by community
+   *     score. Returns up to 7 stories (one per non-retired desk).
+   *   - desk='<deskId>': top 5 stories on that desk, same score.
+   *
+   * Score = like_count - dislike_count - (report_count * 5) + (approved_drafts * 3)
+   * over the last 7 days. Stories on retired desks ('health') excluded.
+   * Recency is a tiebreaker only.
+   */
+  async getTopStories(
+    limit = 6,
+    cityId?: number,
+    desk?: string | null,
+  ): Promise<Story[]> {
+    const windowStart = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+    const cityClause = cityId ? sql`AND s.city_id = ${cityId}` : sql``;
+    const wantSingleDesk = !!desk && desk !== "all";
+    const deskClause = wantSingleDesk ? sql`AND s.desk = ${desk}` : sql``;
+
+    const rows = (await db.execute(sql`
+      WITH draft_counts AS (
+        SELECT story_id, COUNT(*)::int AS approved_drafts
+        FROM story_drafts
+        WHERE status = 'approved' AND source_of_change <> 'snapshot'
+        GROUP BY story_id
+      ),
+      scored AS (
+        SELECT s.*,
+          COALESCE(sa.like_count, 0)
+            - COALESCE(sa.dislike_count, 0)
+            - (COALESCE(sa.report_count, 0) * 5)
+            + (COALESCE(dc.approved_drafts, 0) * 3) AS score
+        FROM stories s
+        LEFT JOIN signal_aggregates sa ON sa.story_id = s.id
+        LEFT JOIN draft_counts dc ON dc.story_id = s.id
+        WHERE s.mod_state = 'approved'
+          AND s.published_at > ${windowStart}
+          AND s.desk NOT IN ('health')
+          ${cityClause}
+          ${deskClause}
+      )
+      SELECT * FROM scored
+      ORDER BY score DESC, published_at DESC
+      LIMIT 200
+    `)) as unknown as any[];
+
+    if (wantSingleDesk) {
+      return rows.slice(0, limit).map(rowToStory);
+    }
+
+    // One-per-desk mode: walk the score-ordered rows, take the first hit for
+    // each desk we haven't seen yet. Up to `limit` desks represented.
     const seen = new Set<string>();
     const out: any[] = [];
-    for (const r of rows as any[]) {
-      const desk = r.desk as string | null;
-      if (!desk || seen.has(desk)) continue;
-      seen.add(desk);
+    for (const r of rows) {
+      const d = r.desk as string | null;
+      if (!d || seen.has(d)) continue;
+      seen.add(d);
       out.push(r);
       if (out.length >= limit) break;
     }

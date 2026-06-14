@@ -1,36 +1,53 @@
+/**
+ * Phase 29: mobile-only collapsible Top Stories.
+ *
+ * On lg+ viewports the right-rail TopStories panel does the work.
+ * On mobile the rail isn't rendered, so we expose the same content above
+ * the chronological feed with a tap-to-collapse chevron. Starts expanded.
+ * State is remembered in localStorage so a reader who collapses it stays
+ * collapsed on their next visit.
+ */
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import type { Story } from "@shared/schema";
 import { type DeskId, relativeTime, DESK_META } from "@/lib/format";
 import { DeskBadge } from "./DeskBadge";
 import { apiRequest } from "@/lib/queryClient";
 import { useCity } from "@/lib/city-context";
 
+const STORAGE_KEY = "zootown:mobileTopStoriesOpen";
+
 interface Props {
   onOpenStory: (s: Story) => void;
-  /**
-   * Which desk is currently filtered on the main feed.
-   *   "all" \u2192 right rail shows one top story per desk (up to 7)
-   *   <DeskId> \u2192 right rail shows top 5 stories on that desk
-   * Top stories also still appear in the chronological feed; the rail is
-   * a parallel view, not a promotion.
-   */
   activeDesk?: "all" | DeskId;
 }
 
-/**
- * Right rail \u2014 "Top stories" panel (Phase 29).
- *
- * Rank: like_count \u2212 dislike_count \u2212 (report_count*5) + (approved_drafts*3)
- * over the last 7 days. Recency is a tiebreaker only.
- *
- * The "01 / 02 / 03" numbered chrome was dropped this phase \u2014 numbers were
- * cosmetic and implied a stronger ordering than the score really expresses.
- */
-export function RightRail({ onOpenStory, activeDesk = "all" }: Props) {
+export function MobileTopStories({ onOpenStory, activeDesk = "all" }: Props) {
   const { currentCity } = useCity();
   const citySlug = currentCity.slug;
+
+  // Default: open on first visit; remember the user's choice after that.
+  const [open, setOpen] = useState<boolean>(true);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      if (stored === "0") setOpen(false);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  function toggle() {
+    setOpen((prev) => {
+      const next = !prev;
+      try { window.localStorage.setItem(STORAGE_KEY, next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }
+
   const top = useQuery<Story[]>({
-    queryKey: ["/api/top-stories", citySlug, activeDesk],
+    queryKey: ["/api/top-stories", citySlug, activeDesk, "mobile"],
     queryFn: async () => {
       const res = await apiRequest(
         "GET",
@@ -38,40 +55,51 @@ export function RightRail({ onOpenStory, activeDesk = "all" }: Props) {
       );
       return (await res.json()) as Story[];
     },
+    enabled: open, // don't even fetch if collapsed
   });
 
   const isSingle = activeDesk !== "all";
   const heading = isSingle
     ? `Top in ${DESK_META[activeDesk as DeskId]?.short ?? activeDesk}`
     : "Top stories";
-  const subhead = isSingle
-    ? "Best 5 of the past 7 days"
-    : "Best of the week, one per desk";
 
   return (
-    <aside className="space-y-6" aria-label="Right rail">
-      <section
-        aria-labelledby="rr-top"
-        className="rounded-lg border border-card-border bg-card p-5"
+    <section
+      aria-labelledby="m-top-heading"
+      className="lg:hidden rounded-lg border border-card-border bg-card overflow-hidden"
+    >
+      <button
+        onClick={toggle}
+        aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 px-4 py-3 hover-elevate"
+        data-testid="mobile-top-stories-toggle"
       >
-        <div className="flex items-baseline justify-between gap-2 mb-3">
+        <div className="flex items-baseline gap-2 min-w-0">
           <h2
-            id="rr-top"
+            id="m-top-heading"
             className="font-mono text-[0.64rem] uppercase tracking-[0.2em] text-muted-foreground"
           >
             {heading}
           </h2>
-          <span className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted-foreground/60">
-            {subhead}
+          <span className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted-foreground/60 truncate">
+            {isSingle ? "Best 5 / 7 days" : "Best of the week"}
           </span>
         </div>
-        <ul className="space-y-3">
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
+      </button>
+
+      {open && (
+        <ul className="px-4 pb-4 space-y-3">
           {(top.data ?? []).map((s) => (
             <li key={s.id}>
               <button
                 onClick={() => onOpenStory(s)}
                 className="w-full text-left rounded-md px-1 py-1 hover-elevate"
-                data-testid={`button-top-${s.id}`}
+                data-testid={`mobile-top-${s.id}`}
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
@@ -89,11 +117,11 @@ export function RightRail({ onOpenStory, activeDesk = "all" }: Props) {
           ))}
           {!top.isLoading && (top.data ?? []).length === 0 && (
             <li className="text-xs text-muted-foreground py-2">
-              Nothing surfaced yet this week. Check back as readers vote.
+              Nothing surfaced yet this week.
             </li>
           )}
           {top.isLoading &&
-            Array.from({ length: 5 }).map((_, i) => (
+            Array.from({ length: 4 }).map((_, i) => (
               <li key={i} className="animate-pulse">
                 <div className="space-y-2">
                   <div className="h-3 w-12 rounded bg-muted" />
@@ -102,7 +130,7 @@ export function RightRail({ onOpenStory, activeDesk = "all" }: Props) {
               </li>
             ))}
         </ul>
-      </section>
-    </aside>
+      )}
+    </section>
   );
 }

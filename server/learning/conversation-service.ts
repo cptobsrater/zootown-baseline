@@ -28,8 +28,9 @@ import { db, storage } from "../storage.js";
 const GEMINI_MODEL = "gemini-flash-latest";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
+// 'health' retired June 14 2026; reroute matrix moved into the prompt below.
 const VALID_DESKS = new Set([
-  "city", "business", "crime", "sports", "health",
+  "city", "business", "crime", "sports",
   "entertainment", "people", "history",
 ]);
 const VALID_KINDS = new Set([
@@ -116,7 +117,13 @@ Allowed signal kinds and their conventions:
   city_voice         Editorial preference for an entire city.
     subject="city:<city_slug>"  target=null  value=<short pref, e.g. "leans toward profiles of named locals">
 
-Allowed desks: city, business, crime, sports, health, entertainment, people, history.
+Allowed desks: city, business, crime, sports, entertainment, people, history. (Seven desks total. The Health desk was retired June 14 2026.)
+
+Where health-flavored stories belong now:
+  - Public health emergencies, outbreaks, water/air quality, Medicaid, healthcare policy/governance → city
+  - Hospital openings, expansions, new clinics, healthcare employers → business
+  - Profiles of named local nurses, doctors, retirements → people
+  - Wellness PR / 'tips for spring allergies' filler is not worth desking at all and should be flagged with less_like_this if it slips through.
 
 Editorial rules to honor:
   - Crime is crime, not politics.

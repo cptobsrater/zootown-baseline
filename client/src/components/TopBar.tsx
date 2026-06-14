@@ -19,13 +19,16 @@ interface Props {
   lastUpdatedLabel: string;
 }
 
+// Public-facing desk tabs. Order matters — 5 breaking-news desks, then
+// People (community celebration), then History (looking back). Health was
+// retired June 14 2026; its stories live on the legacy 'health' desk in the
+// DB but no longer appear in the public nav or feeds.
 const TABS: Array<{ id: "all" | DeskId; label: string }> = [
   { id: "all", label: "All" },
   { id: "city", label: "City" },
   { id: "business", label: "Business" },
   { id: "crime", label: "Crime" },
   { id: "sports", label: "Sports" },
-  { id: "health", label: "Health" },
   { id: "entertainment", label: "Entertainment" },
   { id: "people", label: "People" },
   { id: "history", label: "History" },
