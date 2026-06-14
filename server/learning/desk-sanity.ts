@@ -231,12 +231,16 @@ export async function runDeskSanity(opts?: {
         const detail = `Headline: "${story.headline}"\n\nGemini reasoning: ${v.reasoning}`;
         const severity = v.confidence >= 0.9 ? "high" : "medium";
 
+        // Drizzle expands JS arrays into N positional params, which breaks
+        // Postgres array-literal columns. Use sql.raw for the array literal;
+        // story.id is a validated integer from our own DB.
+        const suggestedActionSql = `UPDATE stories SET desk='${v.suggestedDesk}' WHERE id=${story.id};`;
         const ins = (await db.execute(sql`
           INSERT INTO editorial_audits (kind, severity, status, title, detail,
             subject_story_ids, suggested_action, fingerprint)
           VALUES ('desk_misroute', ${severity}, 'open', ${title}, ${detail},
-            ${[story.id] as any}, ${`UPDATE stories SET desk='${v.suggestedDesk}' WHERE id=${story.id};`},
-            ${fingerprint})
+            ${sql.raw(`ARRAY[${story.id}]::integer[]`)},
+            ${suggestedActionSql}, ${fingerprint})
           ON CONFLICT (kind, fingerprint) DO NOTHING
           RETURNING id
         `)) as unknown as { id: number }[];
