@@ -196,7 +196,10 @@ const MT_LOCAL_TOKENS = [
   "c.m. russell", "cmr", "bozeman high", "butte high",
   "mhsa", "frontier conference", "pioneer league",
   "mustangs", "paddleheads", "range riders",
-  "belgrade", "livingston", "hamilton", "ronan", "polson", "dillon",
+  "belgrade", "livingston", "ronan", "polson", "dillon",
+  // "hamilton" overlaps with Lewis Hamilton (F1) so we require it with a
+  // ', MT' qualifier instead of leaving it bare.
+  "hamilton, mt", "hamilton montana",
   "sidney", "glasgow", "glendive", "miles city", "lewistown",
   "plenty coups", "crow tribe", "blackfeet", "flathead reservation",
   "fort peck", "rocky boy", "northern cheyenne",

@@ -116,7 +116,14 @@ export function computeEnrichment(row: StoryRow): EnrichmentOutputs {
   };
 }
 
-async function applyEnrichment(id: number, e: EnrichmentOutputs): Promise<void> {
+async function applyEnrichment(id: number, e: EnrichmentOutputs, currentDesk: string | null): Promise<void> {
+  // Obituaries and people profiles re-route to the 'people' desk so they
+  // collect in the right place. We DON'T re-route sports content (the
+  // existing desk routing already handles sports correctly).
+  let newDesk: string | undefined;
+  if ((e.isObituary || e.isPeopleProfile) && currentDesk !== "people") {
+    newDesk = "people";
+  }
   await db
     .update(stories)
     .set({
@@ -131,6 +138,7 @@ async function applyEnrichment(id: number, e: EnrichmentOutputs): Promise<void> 
       relevanceScore: e.relevanceScore,
       altDesks: e.altDesks,
       classifierAt: new Date().toISOString(),
+      ...(newDesk ? { desk: newDesk } : {}),
     } as any)
     .where(eq(stories.id, id));
 }
@@ -145,7 +153,7 @@ export async function classifyAndScore(id: number): Promise<EnrichmentOutputs | 
   if (!rows[0]) return null;
   const row = rows[0] as unknown as StoryRow;
   const out = computeEnrichment(row);
-  await applyEnrichment(id, out);
+  await applyEnrichment(id, out, row.desk);
   return out;
 }
 
@@ -172,7 +180,7 @@ export async function reclassifyRecent(opts: { ageHours?: number; limit?: number
   let updated = 0;
   for (const row of rows) {
     const out = computeEnrichment(row);
-    await applyEnrichment(row.id, out);
+    await applyEnrichment(row.id, out, row.desk);
     updated++;
   }
   return { scanned: rows.length, updated };
