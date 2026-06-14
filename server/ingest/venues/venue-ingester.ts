@@ -291,9 +291,23 @@ export async function ingestVenue(venue: CuratedVenue): Promise<VenueIngestRepor
     const desk = deskResult.confidence === "rule" ? deskResult.desk : venue.defaultDesk;
 
     // sourceUrl is what we use for dedup. Use the most stable URL we have
-    // -- the venue's detail page when available, the FB events URL
-    // otherwise.
-    const sourceUrl = c.detailUrl ?? c.fbUrl ?? primaryLink;
+    // -- the venue's detail page when available, otherwise we fall back
+    // to the FB events URL with a deterministic per-event fragment so
+    // every event from the same FB page gets a unique row.
+    let sourceUrl: string;
+    if (c.detailUrl) {
+      sourceUrl = c.detailUrl;
+    } else if (c.fbUrl) {
+      const slug = c.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 80);
+      const day = c.startsAt.slice(0, 10); // YYYY-MM-DD
+      sourceUrl = `${c.fbUrl}#${day}-${slug}`;
+    } else {
+      sourceUrl = primaryLink;
+    }
     if (await storage.findEventByUrl(sourceUrl)) {
       report.duplicates++;
       continue;
