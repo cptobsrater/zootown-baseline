@@ -35,11 +35,11 @@ export const HS_SCHOOL_SEEDS: SchoolSeed[] = [
 
   // ---- Bozeman (4) ----
   { cityId: 4, schoolName: "Bozeman Hawks", shortName: "Bozeman", citySlug: "bozeman", schoolSlug: "bozeman-hawks" },
-  { cityId: 4, schoolName: "Bozeman Gallatin Raptors", shortName: "Gallatin", citySlug: "bozeman", schoolSlug: "bozeman-gallatin-raptors" },
+  { cityId: 4, schoolName: "Bozeman Gallatin Raptors", shortName: "Gallatin", citySlug: "bozeman", schoolSlug: "gallatin-raptors" },
 
   // ---- Butte (5) ----
   { cityId: 5, schoolName: "Butte Bulldogs", shortName: "Butte", citySlug: "butte", schoolSlug: "butte-bulldogs" },
-  { cityId: 5, schoolName: "Butte Central Maroons", shortName: "Butte Central", citySlug: "butte", schoolSlug: "butte-central-maroons" },
+  { cityId: 5, schoolName: "Butte Central Maroons", shortName: "Butte Central", citySlug: "butte", schoolSlug: "butte-central-catholic-maroons" },
 
   // ---- Helena (6) ----
   { cityId: 6, schoolName: "Helena Bengals", shortName: "Helena", citySlug: "helena", schoolSlug: "helena-bengals" },
