@@ -1764,5 +1764,61 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ ok: true, storyId: created.id });
   });
 
+  // ----- Phase 17: editorial audit findings -----
+  // List open (or filtered) audit findings. Admin dashboard polls this.
+  app.get("/api/admin/audits", requireAdmin, async (req, res) => {
+    const status = String(req.query.status ?? "open");
+    const kind = req.query.kind ? String(req.query.kind) : null;
+    const limit = Math.min(Number(req.query.limit ?? 100), 500);
+    const conds: any[] = [];
+    if (status !== "all") conds.push(`status = '${status.replace(/'/g, "")}'`);
+    if (kind) conds.push(`kind = '${kind.replace(/'/g, "")}'`);
+    const whereSql = conds.length > 0 ? `WHERE ${conds.join(" AND ")}` : "";
+    const rows = (await db.execute(
+      sql.raw(`
+        SELECT id, kind, severity, status, title, detail, subject_story_ids,
+               suggested_action, fingerprint, created_at, dismissed_at, fixed_at
+        FROM editorial_audits
+        ${whereSql}
+        ORDER BY
+          CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+          created_at DESC
+        LIMIT ${limit}
+      `),
+    )) as unknown as any[];
+    res.json(rows);
+  });
+
+  // Dismiss a finding (admin verdict: false positive / not worth acting on).
+  app.patch("/api/admin/audits/:id/dismiss", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    await db.execute(sql`
+      UPDATE editorial_audits
+      SET status = 'dismissed', dismissed_at = NOW()
+      WHERE id = ${id} AND status = 'open'
+    `);
+    res.json({ ok: true });
+  });
+
+  // Mark a finding fixed (admin has acted on it).
+  app.patch("/api/admin/audits/:id/fix", requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+    await db.execute(sql`
+      UPDATE editorial_audits
+      SET status = 'fixed', fixed_at = NOW()
+      WHERE id = ${id} AND status = 'open'
+    `);
+    res.json({ ok: true });
+  });
+
+  // One-shot trigger for the audit pass (manual run; same as the cron).
+  app.post("/api/admin/audits/run", requireAdmin, async (_req, res) => {
+    const { runEditorialAudit } = await import("./learning/editorial-audit.js");
+    const report = await runEditorialAudit();
+    res.json(report);
+  });
+
   return httpServer;
 }

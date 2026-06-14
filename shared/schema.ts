@@ -1013,3 +1013,95 @@ export const insertHistoricalProfileSchema = createInsertSchema(historicalProfil
 });
 export type InsertHistoricalProfile = z.infer<typeof insertHistoricalProfileSchema>;
 export type HistoricalProfile = typeof historicalProfiles.$inferSelect;
+
+// Phase 17: editorial audit findings.
+//
+// The audit agent runs daily and writes one row per issue it finds. The
+// admin can dismiss false positives or mark them fixed once they've acted.
+// Findings are deduped by (kind, fingerprint) so re-runs don't pile up.
+export const AUDIT_KINDS = [
+  "duplicate",
+  "desk_misroute",
+  "event_integrity",
+  "proofreading",
+  "obit_dignity",
+  "crosspost_integrity",
+  "headline_length",
+] as const;
+export const AUDIT_SEVERITIES = ["low", "medium", "high"] as const;
+export const AUDIT_STATUSES = ["open", "dismissed", "fixed"] as const;
+
+export const editorialAudits = pgTable("editorial_audits", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").$type<(typeof AUDIT_KINDS)[number]>().notNull(),
+  severity: text("severity").$type<(typeof AUDIT_SEVERITIES)[number]>().notNull().default("medium"),
+  status: text("status").$type<(typeof AUDIT_STATUSES)[number]>().notNull().default("open"),
+  title: text("title").notNull(),
+  detail: text("detail"),
+  subjectStoryIds: integer("subject_story_ids").array().notNull().default(sql`ARRAY[]::integer[]`),
+  suggestedAction: text("suggested_action"),
+  // Stable hash used for dedup. For duplicate clusters, this is a hash of
+  // the sorted story-id set so the same cluster doesn't re-file. For
+  // proofreading, it's hash(story_id + check_name). Etc.
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  dismissedAt: timestamp("dismissed_at", { mode: "string", withTimezone: true }),
+  fixedAt: timestamp("fixed_at", { mode: "string", withTimezone: true }),
+});
+export const insertEditorialAuditSchema = createInsertSchema(editorialAudits).omit({
+  id: true,
+  createdAt: true,
+  dismissedAt: true,
+  fixedAt: true,
+});
+export type InsertEditorialAudit = z.infer<typeof insertEditorialAuditSchema>;
+export type EditorialAudit = typeof editorialAudits.$inferSelect;
+
+// Phase 18: high school sports registry + game observations (MaxPreps).
+export const HS_SPORTS = [
+  "football", "basketball", "basketball-girls", "volleyball",
+  "soccer", "soccer-girls", "baseball", "softball", "wrestling",
+  "cross-country", "track", "tennis", "golf", "ice-hockey", "swimming",
+] as const;
+
+export const hsTeams = pgTable("hs_teams", {
+  id: serial("id").primaryKey(),
+  cityId: integer("city_id").notNull().references(() => cities.id),
+  schoolName: text("school_name").notNull(),
+  shortName: text("short_name").notNull(),
+  citySlug: text("city_slug").notNull(),
+  schoolSlug: text("school_slug").notNull(),
+  sport: text("sport").$type<(typeof HS_SPORTS)[number]>().notNull(),
+  level: text("level").notNull().default("hs_varsity"),
+  teamIdAlias: text("team_id_alias"),
+  isActive: boolean("is_active").notNull().default(true),
+  lastPolledAt: timestamp("last_polled_at", { mode: "string", withTimezone: true }),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+});
+export const insertHsTeamSchema = createInsertSchema(hsTeams).omit({
+  id: true, createdAt: true, lastPolledAt: true,
+});
+export type InsertHsTeam = z.infer<typeof insertHsTeamSchema>;
+export type HsTeam = typeof hsTeams.$inferSelect;
+
+export const hsGames = pgTable("hs_games", {
+  id: serial("id").primaryKey(),
+  contestId: text("contest_id").notNull().unique(),
+  teamId: integer("team_id").notNull().references(() => hsTeams.id),
+  gameDate: text("game_date").notNull(),
+  opponentName: text("opponent_name").notNull(),
+  isHome: boolean("is_home"),
+  isFinal: boolean("is_final").notNull().default(false),
+  teamScore: integer("team_score"),
+  opponentScore: integer("opponent_score"),
+  result: text("result").$type<"W" | "L" | "T">(),
+  gameUrl: text("game_url"),
+  storyId: integer("story_id").references(() => stories.id),
+  observedAt: timestamp("observed_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  finalizedAt: timestamp("finalized_at", { mode: "string", withTimezone: true }),
+});
+export const insertHsGameSchema = createInsertSchema(hsGames).omit({
+  id: true, observedAt: true,
+});
+export type InsertHsGame = z.infer<typeof insertHsGameSchema>;
+export type HsGame = typeof hsGames.$inferSelect;

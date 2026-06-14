@@ -21,7 +21,9 @@
     { "path": "/api/cron/venue-ingest", "schedule": "0 * * * *" },
     { "path": "/api/cron/daily-writer", "schedule": "0 8 * * *" },
     { "path": "/api/cron/rotate-history", "schedule": "0 9 * * 1" },
-    { "path": "/api/cron/anniversary-surfacer", "schedule": "0 12 * * *" }
+    { "path": "/api/cron/anniversary-surfacer", "schedule": "0 12 * * *" },
+    { "path": "/api/cron/editorial-audit", "schedule": "30 12 * * *" },
+    { "path": "/api/cron/hs-sports", "schedule": "30 10,14,19,23 * * *" }
   ],
   "functions": {
     "api/[...path].ts": { "maxDuration": 30 },
@@ -33,6 +35,8 @@
     "api/cron/daily-writer.ts": { "maxDuration": 30 },
     "api/cron/rotate-history.ts": { "maxDuration": 30 },
     "api/cron/anniversary-surfacer.ts": { "maxDuration": 30 },
-    "api/cron/seed-historical-profiles.ts": { "maxDuration": 60 }
+    "api/cron/seed-historical-profiles.ts": { "maxDuration": 60 },
+    "api/cron/editorial-audit.ts": { "maxDuration": 60 },
+    "api/cron/hs-sports.ts": { "maxDuration": 120 }
   }
 }
