@@ -211,9 +211,12 @@ export async function rescoreActive(opts: { ageHours?: number; limit?: number } 
   }>;
 
   // Compute every score locally, then push the whole batch in ONE SQL
-  // statement (UPDATE ... FROM (VALUES ...) AS v(id,score)). This is
-  // ~100x faster than per-row UPDATE round-trips and lets us re-score
-  // 2000+ rows comfortably inside a 60s cron.
+  // statement using UPDATE ... FROM (SELECT * FROM UNNEST(array_of_ids,
+  // array_of_scores)). The trick is that Drizzle's parameter binding
+  // expands arrays into N positional params (which Postgres rejects for
+  // UNNEST(int[]) usage). We render the arrays as Postgres array literals
+  // inline via sql.raw -- safe because ids are numbers and scores are
+  // numbers, no SQL injection surface.
   const tuples: Array<{ id: number; score: number }> = rows.map((r) => ({
     id: r.id,
     score: scoreStory({
@@ -230,23 +233,26 @@ export async function rescoreActive(opts: { ageHours?: number; limit?: number } 
     }).score,
   }));
   if (tuples.length === 0) return { scanned: 0, updated: 0 };
-  // postgres-js parameter binding: build (id, score), (id, score), ...
-  // We chunk to keep parameter count below Postgres' 65535 limit.
   const CHUNK = 1000;
   let updated = 0;
   for (let i = 0; i < tuples.length; i += CHUNK) {
     const chunk = tuples.slice(i, i + CHUNK);
-    const idsArr = chunk.map((t) => t.id);
-    const scoresArr = chunk.map((t) => t.score);
-    await db.execute(sql`
+    // Hard-validate to numbers before rendering inline.
+    const idsLiteral = chunk.map((t) => Number(t.id)).filter((n) => Number.isFinite(n)).join(",");
+    const scoresLiteral = chunk
+      .map((t) => Number(t.score))
+      .filter((n) => Number.isFinite(n))
+      .join(",");
+    if (!idsLiteral) continue;
+    await db.execute(sql.raw(`
       UPDATE stories AS s
          SET relevance_score = v.score
         FROM (
-          SELECT UNNEST(${idsArr}::int[]) AS id,
-                 UNNEST(${scoresArr}::double precision[]) AS score
+          SELECT UNNEST(ARRAY[${idsLiteral}]::int[]) AS id,
+                 UNNEST(ARRAY[${scoresLiteral}]::double precision[]) AS score
         ) AS v
        WHERE s.id = v.id
-    `);
+    `));
     updated += chunk.length;
   }
   return { scanned: rows.length, updated };
