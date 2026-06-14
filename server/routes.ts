@@ -20,6 +20,7 @@ import {
   userStatesForStories,
 } from "./signals/signal-service.js";
 import { registerCockpitRoutes } from "./admin/cockpit-routes.js";
+import { registerExportRoutes } from "./admin/export-routes.js";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // ----- City resolver -----
@@ -1864,6 +1865,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ----- Phase 25: cockpit endpoints (the new admin home) -----
   registerCockpitRoutes(app, requireAdmin);
+  registerExportRoutes(app);
 
   // ----- Phase 17: editorial audit findings -----
   // List open (or filtered) audit findings. Admin dashboard polls this.
