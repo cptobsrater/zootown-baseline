@@ -11,6 +11,14 @@ import { headlessFetcher } from "./ingest/headless.js";
 import type { Source } from "../shared/schema.js";
 import { DESKS, SOURCE_CATEGORIES, FEED_TYPES, SOURCE_TYPES } from "../shared/schema.js";
 import { issueToken, revokeToken, requireAdmin, verifyPassword } from "./auth.js";
+import {
+  ensureSession,
+  readSessionCookie,
+  recordSignal,
+  sessionCookieHeader,
+  aggregatesForStories,
+  userStatesForStories,
+} from "./signals/signal-service.js";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   // ----- City resolver -----
@@ -159,6 +167,76 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
 
   // ----- Admin auth -----
+  // ----- Phase 24: community feedback signals (public) -----
+  //
+  // POST /api/signals records one of: view, like, unlike, dislike,
+  // undislike, share, report. A session cookie is set on first call.
+  // Reports require email + reason; everything else just needs the
+  // story id and the action.
+  app.post("/api/signals", async (req, res) => {
+    const schema = z.object({
+      storyId: z.number().int().positive(),
+      action: z.enum(["view", "like", "unlike", "dislike", "undislike", "share", "report"]),
+      citySlug: z.string().max(50).optional(),
+      reason: z
+        .enum(["misleading", "wrong_city", "too_political", "duplicate", "offensive", "other"])
+        .optional(),
+      comment: z.string().max(2000).optional(),
+      reporterEmail: z.string().email().max(200).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.flatten() });
+    }
+    const cookie = readSessionCookie(req.headers.cookie);
+    const { sessionId, created } = await ensureSession(cookie, parsed.data.citySlug ?? null);
+    if (created) {
+      res.setHeader("Set-Cookie", sessionCookieHeader(sessionId));
+    }
+    const result = await recordSignal({
+      storyId: parsed.data.storyId,
+      sessionId,
+      action: parsed.data.action,
+      citySlug: parsed.data.citySlug ?? null,
+      userAgent: (req.headers["user-agent"] as string | undefined) ?? null,
+      referrer: (req.headers["referer"] as string | undefined) ?? null,
+      reason: parsed.data.reason ?? null,
+      comment: parsed.data.comment ?? null,
+      reporterEmail: parsed.data.reporterEmail ?? null,
+    });
+    if (!result.ok) return res.status(400).json({ error: result.reason });
+    res.json({
+      ok: true,
+      aggregates: result.aggregates,
+      userState: result.userState,
+    });
+  });
+
+  // GET /api/signals?ids=1,2,3 - bulk aggregates for a feed page. Also
+  // returns per-session userState so the UI renders button state
+  // correctly across navigations.
+  app.get("/api/signals", async (req, res) => {
+    const idsParam = String(req.query.ids ?? "");
+    const ids = idsParam.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n > 0);
+    if (ids.length === 0) return res.json({ aggregates: {}, userState: {} });
+    if (ids.length > 100) return res.status(400).json({ error: "too many ids" });
+    const cookie = readSessionCookie(req.headers.cookie);
+    const aggs = await aggregatesForStories(ids);
+    let userMap = new Map<number, { liked: boolean; disliked: boolean; shared: boolean; reported: boolean }>();
+    if (cookie) {
+      userMap = await userStatesForStories(cookie, ids);
+    }
+    const aggregates: Record<number, any> = {};
+    const userState: Record<number, any> = {};
+    for (const id of ids) {
+      aggregates[id] = aggs.get(id) ?? {
+        storyId: id, views: 0, likes: 0, dislikes: 0, shares: 0, reports: 0, brigadeFlag: false,
+      };
+      userState[id] = userMap.get(id) ?? { liked: false, disliked: false, shared: false, reported: false };
+    }
+    res.json({ aggregates, userState });
+  });
+
   app.post("/api/admin/login", async (req, res) => {
     const schema = z.object({ password: z.string().min(1).max(200) });
     const parsed = schema.safeParse(req.body);

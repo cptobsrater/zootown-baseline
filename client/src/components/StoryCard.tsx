@@ -11,6 +11,7 @@ import {
 } from "@/lib/format";
 import { DeskBadge } from "./DeskBadge";
 import { ShareButton } from "./ShareButton";
+import { FeedbackBar } from "./FeedbackBar";
 import { ExternalLink, Layers, MapPin, Scale } from "lucide-react";
 
 export type StoryWithSourceCount = Story & {
@@ -203,6 +204,12 @@ export function StoryCard({ story, onOpen }: Props) {
             <ExternalLink className="h-3 w-3" />
           </a>
         )}
+      </div>
+
+      {/* Phase 24: community feedback bar. Sits at the bottom of every
+          card. Quiet by default; counts only appear when nonzero. */}
+      <div className="mt-3 flex items-center justify-end border-t border-card-border/50 pt-2">
+        <FeedbackBar storyId={story.id} citySlug={(story as any).citySlug ?? undefined} />
       </div>
 
       <span className="sr-only">{deskMeta.label}</span>

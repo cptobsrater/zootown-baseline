@@ -1125,3 +1125,54 @@ export const athletes = pgTable("athletes", {
   updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
 });
 export type Athlete = typeof athletes.$inferSelect;
+
+// Phase 24: community feedback signals.
+//
+// Editorial intent: collect every interaction so the site (and eventually
+// AI) can learn what each community values. Buttons land here verbatim;
+// admin only ACTS on reports, like/dislike data accumulates for later
+// learning.
+export const SIGNAL_ACTIONS = [
+  "view", "like", "dislike", "share", "report", "unlike", "undislike",
+] as const;
+export const REPORT_REASONS = [
+  "misleading", "wrong_city", "too_political", "duplicate", "offensive", "other",
+] as const;
+
+export const readerSessions = pgTable("reader_sessions", {
+  id: text("id").primaryKey(),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  citySlugHint: text("city_slug_hint"),
+  signalCount: integer("signal_count").notNull().default(0),
+});
+export type ReaderSession = typeof readerSessions.$inferSelect;
+
+export const storySignals = pgTable("story_signals", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  storyId: integer("story_id").notNull().references(() => stories.id, { onDelete: "cascade" }),
+  sessionId: text("session_id").notNull().references(() => readerSessions.id),
+  action: text("action").$type<(typeof SIGNAL_ACTIONS)[number]>().notNull(),
+  reason: text("reason").$type<(typeof REPORT_REASONS)[number]>(),
+  comment: text("comment"),
+  reporterEmail: text("reporter_email"),
+  citySlug: text("city_slug"),
+  userAgent: text("user_agent"),
+  referrer: text("referrer"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+});
+export type StorySignal = typeof storySignals.$inferSelect;
+export type InsertStorySignal = typeof storySignals.$inferInsert;
+
+export const signalAggregates = pgTable("signal_aggregates", {
+  storyId: integer("story_id").primaryKey().references(() => stories.id, { onDelete: "cascade" }),
+  viewCount: integer("view_count").notNull().default(0),
+  likeCount: integer("like_count").notNull().default(0),
+  dislikeCount: integer("dislike_count").notNull().default(0),
+  shareCount: integer("share_count").notNull().default(0),
+  reportCount: integer("report_count").notNull().default(0),
+  brigadeFlag: boolean("brigade_flag").notNull().default(false),
+  brigadeReason: text("brigade_reason"),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+});
+export type SignalAggregate = typeof signalAggregates.$inferSelect;
