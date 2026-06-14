@@ -77,8 +77,22 @@ Summary: ${(summary ?? "").slice(0, 800)}`;
   }
   const data = (await res.json()) as any;
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  const cleaned = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-  const parsed = JSON.parse(cleaned);
+  // Defensive parse: Gemini occasionally returns prose wrapping the JSON, or
+  // a leading ```json fence even when we asked for JSON-only output. Strip
+  // anything before the first { and after the last } before parsing.
+  let cleaned = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    // Unparseable -> conservative no-op
+    return { target: "health", confidence: 0, reason: "unparseable response" };
+  }
   const target = String(parsed.target ?? "health").toLowerCase();
   const confidence = Math.max(0, Math.min(1, Number(parsed.confidence ?? 0)));
   const reason = String(parsed.reason ?? "").slice(0, 200);
@@ -117,18 +131,33 @@ export async function retireHealthDesk(opts: { limit?: number; dryRun?: boolean 
     samples: [],
   };
 
+  // Free-tier Gemini has tight per-minute quotas. Pace the calls so a single
+  // pass through ~115 stories doesn't burn through the limit. ~30/min = safe.
+  const SLEEP_MS = 2200;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  let rateLimited = false;
+
   for (const row of rows) {
+    if (rateLimited) break;
     report.scanned++;
     let cls: ReclassifyResult;
     try {
       cls = await classifyOne(row.headline, row.summary ?? "", row.source_name);
     } catch (err: any) {
+      const msg = String(err?.message ?? err);
       report.failures++;
       if (report.failure_samples.length < 3) {
-        report.failure_samples.push(String(err?.message ?? err).slice(0, 300));
+        report.failure_samples.push(msg.slice(0, 300));
       }
+      // Hard-stop on quota errors so we don't burn the budget on retries we
+      // already know will fail. The caller can resume tomorrow with limit=N.
+      if (msg.includes("429") || msg.toLowerCase().includes("quota")) {
+        rateLimited = true;
+      }
+      await sleep(SLEEP_MS);
       continue;
     }
+    await sleep(SLEEP_MS);
 
     report.by_target[cls.target] = (report.by_target[cls.target] ?? 0) + 1;
 
