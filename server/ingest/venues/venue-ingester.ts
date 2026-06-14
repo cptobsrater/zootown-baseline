@@ -355,12 +355,28 @@ export async function ingestAllCuratedVenues(): Promise<VenueIngestReport[]> {
  * `minHours` (default 20h = roughly daily without phase-locking to a
  * specific minute). Records the run + report in venue_ingest_runs.
  */
+/**
+ * Cron entry-point. Runs venues whose last_run_at is older than `minHours`.
+ *
+ * We parallelize across venues with a concurrency cap of 4. With ~16
+ * curated venues and ~6-10s per Facebook render this brings the worst
+ * case under the 90s function budget.
+ *
+ * We also bound the total wall time with a soft deadline -- any venue
+ * still pending when the deadline hits gets skipped (its cooldown is
+ * NOT updated, so it picks up on the next tick).
+ */
 export async function tickVenueIngest(minHours = 20): Promise<{ ran: VenueIngestReport[]; skipped: string[] }> {
   const { db } = await import("../../storage.js");
   const { sql } = await import("drizzle-orm");
   const cutoffMs = Date.now() - minHours * 3600_000;
   const ran: VenueIngestReport[] = [];
   const skipped: string[] = [];
+  const startedAt = Date.now();
+  const SOFT_DEADLINE_MS = 75_000; // 90s budget with headroom
+
+  // First pass: figure out which venues are eligible this tick.
+  const eligible: typeof CURATED_VENUES = [];
   for (const v of CURATED_VENUES) {
     const rows = (await db.execute(
       sql`SELECT last_run_at FROM venue_ingest_runs WHERE venue_id = ${v.id}`,
@@ -368,17 +384,50 @@ export async function tickVenueIngest(minHours = 20): Promise<{ ran: VenueIngest
     const last = rows[0]?.last_run_at ? Date.parse(rows[0].last_run_at) : 0;
     if (last && last > cutoffMs) {
       skipped.push(v.id);
-      continue;
+    } else {
+      eligible.push(v);
     }
-    const report = await ingestVenue(v);
-    ran.push(report);
-    await db.execute(sql`
-      INSERT INTO venue_ingest_runs (venue_id, last_run_at, last_report)
-      VALUES (${v.id}, NOW(), ${JSON.stringify(report)}::jsonb)
-      ON CONFLICT (venue_id) DO UPDATE
-        SET last_run_at = EXCLUDED.last_run_at,
-            last_report = EXCLUDED.last_report
-    `);
   }
+
+  // Concurrency-capped worker pool.
+  const CONCURRENCY = 4;
+  const queue = [...eligible];
+  async function worker(): Promise<void> {
+    while (queue.length) {
+      if (Date.now() - startedAt >= SOFT_DEADLINE_MS) {
+        // Time's up. Anything still in the queue rolls to the next tick.
+        const stillPending = queue.splice(0).map((v) => v.id);
+        skipped.push(...stillPending);
+        return;
+      }
+      const v = queue.shift();
+      if (!v) break;
+      try {
+        const report = await ingestVenue(v);
+        ran.push(report);
+        await db.execute(sql`
+          INSERT INTO venue_ingest_runs (venue_id, last_run_at, last_report)
+          VALUES (${v.id}, NOW(), ${JSON.stringify(report)}::jsonb)
+          ON CONFLICT (venue_id) DO UPDATE
+            SET last_run_at = EXCLUDED.last_run_at,
+                last_report = EXCLUDED.last_report
+        `);
+      } catch (err) {
+        // Don't update cooldown on hard failure -- let the next tick try.
+        ran.push({
+          venueId: v.id,
+          websiteCount: 0,
+          facebookCount: 0,
+          mergedCount: 0,
+          inserted: 0,
+          duplicates: 0,
+          quarantined: 0,
+          skippedDeadLink: 0,
+          errors: [`fatal: ${(err as Error).message}`],
+        });
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   return { ran, skipped };
 }
