@@ -565,7 +565,7 @@ function CockpitStoryCard({ item }: { item: CockpitItem }) {
         </div>
       </div>
 
-      {chatOpen && <ChatStub storyId={item.id} />}
+      {chatOpen && <ChatThread storyId={item.id} cityHint={item.city_id} />}
     </article>
   );
 }
@@ -603,33 +603,161 @@ function SignalColumn({ item }: { item: CockpitItem }) {
   );
 }
 
-function ChatStub({ storyId }: { storyId: number }) {
+// Phase 26: real chat thread. Loads history, sends to /chat, renders
+// AI replies plus any applied-signal notes. Each story gets its own
+// thread so context stays tight.
+interface ConversationTurn {
+  id: number;
+  role: "admin" | "ai";
+  message: string;
+  extractedSignals?: Array<{
+    kind: string;
+    subject: string;
+    target?: string | null;
+    value?: string | null;
+    confidence?: number;
+  }>;
+  createdAt: string;
+}
+
+function ChatThread({ storyId, cityHint }: { storyId: number; cityHint: number | null }) {
+  const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastApplied, setLastApplied] = useState<string[]>([]);
+  const { currentCity } = useAdminCity();
+
+  const { data, refetch } = useQuery<{ turns: ConversationTurn[] }>({
+    queryKey: ["story-conversation", storyId],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/stories/${storyId}/conversation`);
+      return res.json();
+    },
+  });
+
+  async function send() {
+    const text = draft.trim();
+    if (!text || pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      const res = await apiRequest("POST", `/api/admin/stories/${storyId}/chat`, {
+        message: text,
+        citySlug: currentCity.slug,
+      });
+      const body = await res.json();
+      if (body?.error && !body?.aiTurn) {
+        setError(String(body.error));
+      } else if (body?.appliedNotes) {
+        setLastApplied(body.appliedNotes);
+      }
+      setDraft("");
+      await refetch();
+      // Cockpit feed may have changed (desk reroute, hidden story).
+      queryClient.invalidateQueries({ queryKey: ["cockpit-feed"] });
+      queryClient.invalidateQueries({ queryKey: ["cockpit-summary"] });
+    } catch (e: any) {
+      setError(String(e?.message ?? e));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  const turns = data?.turns ?? [];
+
   return (
-    <div className="mt-3 border-t border-border/50 pt-3 text-xs">
+    <div className="mt-3 border-t border-border/50 pt-3 space-y-2">
       <div className="flex items-center gap-2 text-muted-foreground">
         <MessageSquare className="h-3 w-3" />
         <span className="font-mono text-[0.6rem] uppercase tracking-[0.18em]">
           Train the AI about this story
         </span>
+        {turns.length > 0 && (
+          <span className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted-foreground/70">
+            · {turns.length} message{turns.length === 1 ? "" : "s"}
+          </span>
+        )}
       </div>
-      <p className="mt-1 text-muted-foreground">
-        Wiring up in Phase 26. The input below stages your message; nothing
-        sent yet.
-      </p>
-      <textarea
-        placeholder="e.g. 'this should be on the people desk, not city - it's a profile about the new librarian'"
-        rows={2}
-        className="mt-2 w-full rounded-md border border-card-border bg-background px-2 py-1 text-xs"
-        data-testid={`chat-input-${storyId}`}
-      />
-      <div className="mt-1 flex items-center justify-end">
+
+      {turns.length > 0 && (
+        <div className="space-y-1.5 max-h-72 overflow-y-auto rounded-md border border-card-border bg-secondary/20 p-2">
+          {turns.map((t) => (
+            <ChatTurn key={t.id} turn={t} />
+          ))}
+        </div>
+      )}
+
+      {lastApplied.length > 0 && (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2 text-[0.7rem] text-emerald-600">
+          {lastApplied.map((n, i) => (
+            <div key={i}>✓ {n}</div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-start gap-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              send();
+            }
+          }}
+          placeholder="e.g. 'this should be on the people desk - it's a profile about the new librarian, and Hamilton always cares about people stories'"
+          rows={2}
+          disabled={pending}
+          className="flex-1 rounded-md border border-card-border bg-background px-2 py-1 text-xs disabled:opacity-50"
+          data-testid={`chat-input-${storyId}`}
+        />
         <button
-          disabled
-          className="rounded-md border border-card-border bg-secondary/50 px-2 py-1 text-xs text-muted-foreground opacity-60"
-          title="Phase 26 will enable this"
+          onClick={send}
+          disabled={pending || !draft.trim()}
+          className="shrink-0 rounded-md bg-foreground text-background px-3 py-1 text-xs hover-elevate disabled:opacity-50"
+          data-testid={`chat-send-${storyId}`}
         >
-          Send (coming soon)
+          {pending ? "Sending..." : "Send"}
         </button>
+      </div>
+      {error && <div className="text-[0.7rem] text-red-500">{error}</div>}
+      <p className="text-[0.65rem] text-muted-foreground/70">
+        ⌘/Ctrl+Enter to send. The AI applies desk reroutes and source-trust
+        nudges immediately; other signals accumulate for future passes.
+      </p>
+    </div>
+  );
+}
+
+function ChatTurn({ turn }: { turn: ConversationTurn }) {
+  const isAdmin = turn.role === "admin";
+  const sigs = Array.isArray(turn.extractedSignals) ? turn.extractedSignals : [];
+  return (
+    <div className={`flex ${isAdmin ? "justify-end" : "justify-start"}`}>
+      <div
+        className={`max-w-[85%] rounded-md px-2 py-1 text-xs ${
+          isAdmin
+            ? "bg-foreground/10 text-foreground"
+            : "bg-card border border-card-border text-foreground"
+        }`}
+      >
+        <div className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted-foreground mb-0.5">
+          {isAdmin ? "you" : "ai"}
+        </div>
+        <div className="whitespace-pre-wrap leading-relaxed">{turn.message}</div>
+        {sigs.length > 0 && (
+          <div className="mt-1.5 space-y-0.5">
+            {sigs.map((s, i) => (
+              <div
+                key={i}
+                className="inline-block rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[0.55rem] font-mono uppercase tracking-[0.14em] text-emerald-600 mr-1"
+                title={`${s.kind} — ${s.subject}${s.value ? ` = ${s.value}` : ""}`}
+              >
+                {s.kind.replace(/_/g, " ")}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

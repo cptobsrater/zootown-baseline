@@ -1176,3 +1176,42 @@ export const signalAggregates = pgTable("signal_aggregates", {
   updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
 });
 export type SignalAggregate = typeof signalAggregates.$inferSelect;
+
+// Phase 26: conversational training. Each admin chat turn lands in
+// story_conversations; the AI's response can spawn structured signals
+// in learned_signals that classifiers consume.
+export const CONVERSATION_ROLES = ["admin", "ai"] as const;
+export const LEARNED_SIGNAL_KINDS = [
+  "desk_reroute", "desk_rule", "source_trust_bump",
+  "more_like_this", "less_like_this", "editorial_note", "city_voice",
+] as const;
+
+export const storyConversations = pgTable("story_conversations", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  storyId: integer("story_id").notNull().references(() => stories.id, { onDelete: "cascade" }),
+  role: text("role").$type<(typeof CONVERSATION_ROLES)[number]>().notNull(),
+  message: text("message").notNull(),
+  extractedSignals: jsonb("extracted_signals"),
+  adminId: text("admin_id"),
+  citySlug: text("city_slug"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+});
+export type StoryConversation = typeof storyConversations.$inferSelect;
+export type InsertStoryConversation = typeof storyConversations.$inferInsert;
+
+export const learnedSignals = pgTable("learned_signals", {
+  id: bigserial("id", { mode: "number" }).primaryKey(),
+  conversationId: integer("conversation_id"),  // bigint reference; we don't FK-restrict to allow soft delete
+  storyId: integer("story_id").references(() => stories.id, { onDelete: "set null" }),
+  kind: text("kind").$type<(typeof LEARNED_SIGNAL_KINDS)[number]>().notNull(),
+  subject: text("subject").notNull(),
+  target: text("target"),
+  value: text("value"),
+  confidence: doublePrecision("confidence").notNull().default(0.7),
+  applied: boolean("applied").notNull().default(false),
+  appliedAt: timestamp("applied_at", { mode: "string", withTimezone: true }),
+  applicationNote: text("application_note"),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+});
+export type LearnedSignal = typeof learnedSignals.$inferSelect;
+export type InsertLearnedSignal = typeof learnedSignals.$inferInsert;

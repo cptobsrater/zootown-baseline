@@ -10,6 +10,7 @@
 import type { Express } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "../storage.js";
+import { sendAdminMessage, listConversation } from "../learning/conversation-service.js";
 
 interface AttentionRow {
   reports: number;
@@ -30,6 +31,41 @@ async function cityIdForSlug(slug: string | null): Promise<number | null> {
 }
 
 export function registerCockpitRoutes(app: Express, requireAdmin: any) {
+  // ----- Phase 26: per-story chat with the AI -----
+  //
+  // GET  /api/admin/stories/:id/conversation - load thread history
+  // POST /api/admin/stories/:id/chat         - admin sends a message,
+  //   gets back the AI's reply, the extracted signals, and notes about
+  //   which signals applied immediately (desk reroute, source-trust bump).
+  app.get("/api/admin/stories/:id/conversation", requireAdmin, async (req: any, res: any) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid id" });
+    try {
+      const turns = await listConversation(id);
+      res.json({ turns });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  app.post("/api/admin/stories/:id/chat", requireAdmin, async (req: any, res: any) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid id" });
+    const message = String(req.body?.message ?? "").trim();
+    if (!message) return res.status(400).json({ error: "message required" });
+    if (message.length > 4000) return res.status(400).json({ error: "message too long" });
+    const citySlug = req.body?.citySlug ? String(req.body.citySlug) : null;
+    const adminId = (req as any).adminId ?? null;
+    try {
+      const result = await sendAdminMessage({
+        storyId: id, message, adminId, citySlug,
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
   // GET /api/admin/cockpit/summary
   // One round-trip for the banner counts. Optionally city-scoped.
   app.get("/api/admin/cockpit/summary", requireAdmin, async (req: any, res: any) => {
