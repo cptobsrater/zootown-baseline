@@ -52,22 +52,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(401).json({ error: "unauthorized" });
   }
   try {
-    const now = Date.now();
-    const sources = (await storage.listSources()).filter((s) => dueNow(s, now));
-    const results: Array<{ source: string; added: number; errors: number }> = [];
-    for (const s of sources) {
-      try {
-        const summary = await ingestSource(s);
-        results.push({ source: s.name, added: summary.added, errors: summary.errors });
-      } catch (err: any) {
-        results.push({ source: s.name, added: 0, errors: 1 });
-      }
-    }
-
-    // X ingest runs on its own cadence (15min daytime / 60min overnight)
-    // inside the same cron tick. xIsDue() checks last_polled_at; pollXList
-    // does the API call + DB writes; processXSignals drains the resulting
-    // tweet rows into placeholder stories.
+    // ---- X poll FIRST ----
+    // The RSS source loop below can run long (60-source sequential fetch);
+    // if Vercel times out at 60s, X must already be done. X is bounded at
+    // ~5s (one API call + bounded DB writes), so it always finishes before
+    // any RSS source is even started.
     let x: {
       polled: boolean;
       reason?: string;
@@ -98,7 +87,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    res.json({ ok: true, checked: sources.length, results, x });
+    // ---- RSS sources next ----
+    // Bounded by a soft deadline so we never blow the 60s function limit.
+    // Leave 5s of headroom before Vercel kills us; any source still pending
+    // at that point gets skipped this tick and picked up on the next one.
+    const STARTED_AT = Date.now();
+    const SOFT_DEADLINE_MS = 50_000;
+    const sources = (await storage.listSources()).filter((s) => dueNow(s, STARTED_AT));
+    const results: Array<{ source: string; added: number; errors: number }> = [];
+    let skippedForTime = 0;
+    for (const s of sources) {
+      if (Date.now() - STARTED_AT >= SOFT_DEADLINE_MS) {
+        skippedForTime += 1;
+        continue;
+      }
+      try {
+        const summary = await ingestSource(s);
+        results.push({ source: s.name, added: summary.added, errors: summary.errors });
+      } catch (err: any) {
+        results.push({ source: s.name, added: 0, errors: 1 });
+      }
+    }
+
+    res.json({
+      ok: true,
+      checked: sources.length,
+      processed: results.length,
+      skippedForTime,
+      results,
+      x,
+    });
   } catch (err: any) {
     console.error("[cron/ingest] error:", err);
     res.status(500).json({ error: String(err?.message ?? err) });
