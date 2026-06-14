@@ -12,6 +12,7 @@ import Landing from "@/pages/landing";
 import Home from "@/pages/home";
 import AdminPage from "@/pages/admin";
 import CockpitPage from "@/pages/cockpit";
+import CockpitPresetsPage from "@/pages/cockpit-presets";
 import CockpitLivePage from "@/pages/cockpit-live";
 import RulesQueuePage from "@/pages/rules-queue";
 import XUnmappedPage from "@/pages/x-unmapped";
@@ -29,16 +30,19 @@ function AppRouter() {
       {/* Root shows the city picker landing page */}
       <Route path="/" component={Landing} />
 
-      {/* Phase 6 editorial cockpit — saved feed presets, live preview, etc.
-          Must come BEFORE the bare /admin route so wouter matches it first. */}
-      <Route path="/admin/cockpit" component={CockpitPage} />
+      {/* Phase 25: the new cockpit replaces the 9-tab admin. The legacy
+          page is parked at /admin/legacy so nothing's lost while we settle
+          into the new shape. All the deeper admin routes still work — they
+          remain accessible from the cockpit's Settings drawer. */}
+      <Route path="/admin/legacy" component={AdminPage} />
+      <Route path="/admin/cockpit" component={CockpitPresetsPage} />
       <Route path="/admin/cockpit-live" component={CockpitLivePage} />
       <Route path="/admin/rules-queue" component={RulesQueuePage} />
       <Route path="/admin/x-unmapped" component={XUnmappedPage} />
       <Route path="/admin/synthesis-queue" component={SynthesisQueuePage} />
       <Route path="/admin/event-quarantine" component={EventQuarantinePage} />
       {/* Admin is not city-scoped at the URL level (admin uses an in-page city switcher) */}
-      <Route path="/admin" component={AdminPage} />
+      <Route path="/admin" component={CockpitPage} />
 
       {/* Public feedback page -- linked from the floating Feedback button. */}
       <Route path="/feedback" component={FeedbackPage} />
