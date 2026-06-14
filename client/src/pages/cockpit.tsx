@@ -674,7 +674,7 @@ function ChatThread({
     try {
       const res = await apiRequest("POST", `/api/admin/stories/${storyId}/chat`, {
         message: text,
-        citySlug: currentCity.slug,
+        citySlug: currentCity.slug === "all" ? null : currentCity.slug,
       });
       const body = await res.json();
       if (body?.error && !body?.aiTurn) {

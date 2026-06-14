@@ -3,7 +3,7 @@
  * internal admin state (via useAdminCity) instead of navigating the URL.
  */
 import { useState, useEffect, useRef } from "react";
-import { MapPin, ChevronDown, Check } from "lucide-react";
+import { MapPin, ChevronDown, Check, Globe } from "lucide-react";
 import { useAdminCity } from "@/lib/admin-city-context";
 
 export function AdminCitySwitcher() {
@@ -41,7 +41,11 @@ export function AdminCitySwitcher() {
         data-testid="button-admin-city-switcher"
         className="inline-flex items-center gap-1.5 rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-foreground hover-elevate transition-colors"
       >
-        <MapPin className="h-3.5 w-3.5" />
+        {currentCity.slug === "all" ? (
+          <Globe className="h-3.5 w-3.5" />
+        ) : (
+          <MapPin className="h-3.5 w-3.5" />
+        )}
         <span>
           Editing: <span className="font-semibold">{currentCity.displayName}</span>
         </span>
@@ -60,10 +64,11 @@ export function AdminCitySwitcher() {
             </div>
           </div>
           <ul className="py-1 max-h-[60vh] overflow-y-auto">
-            {cities.map((c) => {
+            {cities.map((c, idx) => {
               const isCurrent = c.slug === currentCity.slug;
+              const isAll = c.slug === "all";
               return (
-                <li key={c.slug}>
+                <li key={c.slug} className={isAll ? "border-b border-border/60" : ""}>
                   <button
                     onClick={() => selectCity(c.slug)}
                     data-testid={`admin-city-option-${c.slug}`}
@@ -71,9 +76,21 @@ export function AdminCitySwitcher() {
                       isCurrent ? "text-foreground font-medium" : "text-muted-foreground"
                     }`}
                   >
-                    <span>
-                      {c.displayName}
-                      <span className="ml-1 text-[0.7rem] text-muted-foreground/70">{c.state}</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      {isAll && <Globe className="h-3.5 w-3.5 text-primary" />}
+                      <span>
+                        {c.displayName}
+                        {!isAll && (
+                          <span className="ml-1 text-[0.7rem] text-muted-foreground/70">
+                            {c.state}
+                          </span>
+                        )}
+                        {isAll && (
+                          <span className="ml-1.5 text-[0.65rem] uppercase tracking-[0.14em] text-muted-foreground/70">
+                            cross-city
+                          </span>
+                        )}
+                      </span>
                     </span>
                     {isCurrent && <Check className="h-3.5 w-3.5 text-primary" />}
                   </button>

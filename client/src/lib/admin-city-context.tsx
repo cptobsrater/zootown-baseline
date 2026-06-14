@@ -30,6 +30,25 @@ const DEFAULT_CITY: City = {
   nwsZone: null,
 };
 
+// Admin-only virtual scope. The backend treats slug="all" (or any non-real
+// slug resolving to null) as cross-city. Anything that requires a single
+// real city (URL routing to /:citySlug/..., weather lookups, etc.) must
+// guard against this slug.
+export const ALL_MONTANA_CITY: City = {
+  id: 0,
+  slug: "all",
+  displayName: "All Montana",
+  state: "MT",
+  lat: 46.8721,
+  lon: -113.994,
+  countyName: null,
+  nwsZone: null,
+};
+
+export function isAllMontana(city: City): boolean {
+  return city.slug === "all";
+}
+
 const STORAGE_KEY = "zootown:adminCitySlug";
 const AdminCityContext = createContext<AdminCityContextValue | undefined>(undefined);
 
@@ -54,7 +73,15 @@ export function AdminCityProvider({ children }: { children: ReactNode }) {
     staleTime: 60 * 60 * 1000,
   });
 
+  // The admin switcher includes a virtual "All Montana" scope as the first
+  // option. It is NOT returned by the public /api/cities endpoint.
+  const citiesWithAll = useMemo<City[]>(
+    () => [ALL_MONTANA_CITY, ...cities],
+    [cities],
+  );
+
   const currentCity = useMemo<City>(() => {
+    if (slug === "all") return ALL_MONTANA_CITY;
     return cities.find((c) => c.slug === slug) ?? DEFAULT_CITY;
   }, [cities, slug]);
 
@@ -68,7 +95,7 @@ export function AdminCityProvider({ children }: { children: ReactNode }) {
   }
 
   const value: AdminCityContextValue = {
-    cities,
+    cities: citiesWithAll,
     isLoading,
     currentCity,
     setCurrentCitySlug,
