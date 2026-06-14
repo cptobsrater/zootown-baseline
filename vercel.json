@@ -38,9 +38,10 @@
     "api/cron/rotate-history.ts": { "maxDuration": 30 },
     "api/cron/anniversary-surfacer.ts": { "maxDuration": 30 },
     "api/cron/seed-historical-profiles.ts": { "maxDuration": 60 },
-    "api/cron/editorial-audit.ts": { "maxDuration": 60 },
+    "api/cron/editorial-audit.ts": { "maxDuration": 120 },
     "api/cron/hs-sports.ts": { "maxDuration": 120 },
     "api/cron/desk-sanity.ts": { "maxDuration": 120 },
-    "api/cron/athlete-enrichment.ts": { "maxDuration": 120 }
+    "api/cron/athlete-enrichment.ts": { "maxDuration": 120 },
+    "api/cron/autofix-dupes.ts": { "maxDuration": 120 }
   }
 }
