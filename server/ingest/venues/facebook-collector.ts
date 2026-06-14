@@ -61,9 +61,13 @@ async function renderFacebookEvents(slug: string): Promise<string | null> {
       },
       body: JSON.stringify({
         url,
-        viewport: { width: 1280, height: 1800 },
+        viewport: { width: 1280, height: 2400 },
         userAgent:
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        // Wait for Facebook's React SPA to finish loading the events grid.
+        // Without networkidle0 we sometimes get the page chrome but an empty
+        // grid because the GraphQL fetch hasn't completed yet.
+        gotoOptions: { waitUntil: "networkidle0", timeout: 30000 },
       }),
       signal: ctl.signal,
     });
@@ -109,10 +113,20 @@ function htmlToText(html: string): string {
  */
 const DAYS = "(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)";
 const MONTHS = "(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)";
-const EVENT_SPLIT_RE = new RegExp(`(?=${DAYS},\\s+\\d{1,2}\\s+${MONTHS}\\b)`, "g");
-// Header: weekday, day-of-month, month, optional "-day month" range, optional "at HH:MM TZ"
-const HEADER_RE = new RegExp(
-  `^${DAYS},\\s+(\\d{1,2})\\s+(${MONTHS})(?:-(\\d{1,2})\\s+(${MONTHS}))?(?:\\s+at\\s+(\\d{1,2}:\\d{2})\\s+([A-Z]{2,5}))?\\b`,
+// Facebook ships two locale variants of its event date strings; we have
+// to accept both because which one we get is non-deterministic across
+// renders.
+//   Format A (UK-style, 24h):  "Sun, 14 Jun at 19:00 MDT"
+//   Format B (US-style, 12h):  "Sun, Jun 14 at 7:00 PM MDT"
+const EVENT_SPLIT_RE = new RegExp(
+  `(?=${DAYS},\\s+(?:\\d{1,2}\\s+${MONTHS}|${MONTHS}\\s+\\d{1,2})\\b)`,
+  "g",
+);
+const HEADER_A = new RegExp(
+  `^${DAYS},\\s+(\\d{1,2})\\s+(${MONTHS})(?:\\s*-\\s*(\\d{1,2})\\s+(${MONTHS}))?(?:\\s+at\\s+(\\d{1,2}:\\d{2})\\s+([A-Z]{2,5}))?\\b`,
+);
+const HEADER_B = new RegExp(
+  `^${DAYS},\\s+(${MONTHS})\\s+(\\d{1,2})(?:\\s*-\\s*(${MONTHS})\\s+(\\d{1,2}))?(?:\\s+at\\s+(\\d{1,2}:\\d{2})\\s+(AM|PM)\\s+([A-Z]{2,5}))?\\b`,
 );
 
 const MONTH_NUM: Record<string, number> = {
@@ -125,18 +139,28 @@ const MONTH_NUM: Record<string, number> = {
  * if the month/day combo is in the past relative to today, we bump by
  * one year (Facebook's events tab is always future-facing).
  */
-function resolveIso(dayStr: string, monthStr: string, timeStr?: string, tz?: string): string | null {
+function resolveIso(
+  dayStr: string,
+  monthStr: string,
+  timeStr?: string,
+  meridiem?: string,
+  tz?: string,
+): string | null {
   const dd = Number(dayStr);
   const mm = MONTH_NUM[monthStr.toLowerCase()];
   if (!Number.isFinite(dd) || !mm) return null;
   const now = new Date();
   let year = now.getUTCFullYear();
-  // We assume MDT/MST for unspecified Montana times. Time string is
-  // either "HH:MM" or absent.
+  // Time may be 24-hour (Format A) or 12-hour + AM/PM (Format B).
   let hh = 0, mi = 0;
   if (timeStr) {
     const [h, m] = timeStr.split(":").map(Number);
     hh = h; mi = m;
+    if (meridiem) {
+      const isPm = meridiem.toUpperCase() === "PM";
+      if (isPm && hh < 12) hh += 12;
+      if (!isPm && hh === 12) hh = 0;
+    }
   }
   // Build a candidate date as local Montana time using offset -06:00 (MDT)
   // unless tz explicitly says MST. Most of Montana's event season is MDT.
@@ -172,9 +196,30 @@ function parseEvents(visibleText: string, fbPageEventsUrl: string): RawFacebookE
   const out: RawFacebookEvent[] = [];
 
   for (const part of parts) {
-    const headerMatch = part.match(HEADER_RE);
-    if (!headerMatch) continue;
-    const [matched, dayStr, monthStr, _endDay, _endMonth, timeStr, tz] = headerMatch;
+    // Try Format A (day-first) then Format B (month-first).
+    let matched = "";
+    let dayStr = "";
+    let monthStr = "";
+    let timeStr: string | undefined;
+    let meridiem: string | undefined;
+    let tz: string | undefined;
+    const a = part.match(HEADER_A);
+    if (a) {
+      matched = a[0];
+      dayStr = a[1];
+      monthStr = a[2];
+      timeStr = a[5];
+      tz = a[6];
+    } else {
+      const b = part.match(HEADER_B);
+      if (!b) continue;
+      matched = b[0];
+      monthStr = b[1];
+      dayStr = b[2];
+      timeStr = b[5];
+      meridiem = b[6];
+      tz = b[7];
+    }
     const rest = part.slice(matched.length).trim();
     if (!rest) continue;
 
@@ -206,7 +251,7 @@ function parseEvents(visibleText: string, fbPageEventsUrl: string): RawFacebookE
       title = titleAndVenue;
     }
 
-    const startsAt = resolveIso(dayStr, monthStr, timeStr, tz);
+    const startsAt = resolveIso(dayStr, monthStr, timeStr, meridiem, tz);
     if (!startsAt || !title) continue;
 
     out.push({
