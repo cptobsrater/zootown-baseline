@@ -21,7 +21,7 @@
  *   - Settings hidden by default. Most days the admin should never have
  *     to open it.
  */
-import { useEffect, useState, useMemo } from "react";
+import { Component, useEffect, useState, useMemo, type ReactNode } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -93,6 +93,54 @@ interface Summary {
 type FilterId = "all" | "reports" | "brigade" | "drafts" | "audits" | "fresh24h";
 type SortId = "attention" | "newest" | "most_disliked";
 
+// --- Error boundary ---
+//
+// A single render error in a dialog used to white-screen the entire admin.
+// This catches it, shows what blew up, and lets the rest of the cockpit keep
+// working when the user dismisses or reloads.
+class CockpitErrorBoundary extends Component<
+  { children: ReactNode },
+  { error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error) {
+    // eslint-disable-next-line no-console
+    console.error("[cockpit] render error:", error);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-background p-6">
+          <div className="max-w-lg w-full rounded-lg border border-red-500/40 bg-red-500/5 p-5 text-sm">
+            <div className="flex items-center gap-2 text-red-500 font-semibold">
+              <AlertTriangle className="h-4 w-4" /> Something broke in the cockpit.
+            </div>
+            <p className="mt-2 text-muted-foreground">
+              The rest of the page is fine — just this part hit an error. Reload to keep working.
+            </p>
+            <pre className="mt-3 max-h-48 overflow-auto rounded bg-card p-2 text-[0.65rem] text-muted-foreground whitespace-pre-wrap">
+              {String(this.state.error?.message ?? this.state.error)}
+            </pre>
+            <button
+              onClick={() => { this.setState({ error: null }); }}
+              className="mt-3 rounded-md border border-card-border bg-card px-3 py-1.5 text-xs hover-elevate"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // --- Page shell ---
 
 export default function CockpitPage() {
@@ -100,9 +148,11 @@ export default function CockpitPage() {
   useEffect(() => subscribeAdminToken((t) => setToken(t)), []);
   if (!token) return <AdminLogin />;
   return (
-    <AdminCityProvider>
-      <CockpitInner />
-    </AdminCityProvider>
+    <CockpitErrorBoundary>
+      <AdminCityProvider>
+        <CockpitInner />
+      </AdminCityProvider>
+    </CockpitErrorBoundary>
   );
 }
 
@@ -1222,6 +1272,21 @@ function TrashPanel({ onClose }: { onClose: () => void }) {
 
 // --- Phase 28: Edit dialog (fields + side-by-side chat) ---
 
+// Tags come back from the API as either a Postgres-array-style string
+// ("{a,b}"), a comma-separated string ("a, b"), a JS array, or null.
+// Normalize before anything tries to .join() on it.
+function normalizeTags(raw: unknown): string[] {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw.map((t) => String(t)).filter(Boolean);
+  const s = String(raw).trim();
+  if (!s) return [];
+  // Postgres array literal: {a,b,c}
+  if (s.startsWith("{") && s.endsWith("}")) {
+    return s.slice(1, -1).split(",").map((t) => t.trim().replace(/^"|"$/g, "")).filter(Boolean);
+  }
+  return s.split(",").map((t) => t.trim()).filter(Boolean);
+}
+
 function EditDialog({
   item,
   onClose,
@@ -1229,17 +1294,18 @@ function EditDialog({
   item: CockpitItem;
   onClose: () => void;
 }) {
+  const initialTagsCsv = normalizeTags(item.tags).join(", ");
   const [headline, setHeadline] = useState(item.headline);
   const [summary, setSummary] = useState(item.summary ?? "");
   const [desk, setDesk] = useState(item.desk);
-  const [tagsText, setTagsText] = useState((item.tags ?? []).join(", "));
+  const [tagsText, setTagsText] = useState(initialTagsCsv);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const dirty =
     headline !== item.headline ||
     summary !== (item.summary ?? "") ||
     desk !== item.desk ||
-    tagsText !== (item.tags ?? []).join(", ");
+    tagsText !== initialTagsCsv;
 
   const save = useMutation({
     mutationFn: async () => {
