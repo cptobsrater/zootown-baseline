@@ -1236,3 +1236,16 @@ export const storyDrafts = pgTable("story_drafts", {
 });
 export type StoryDraft = typeof storyDrafts.$inferSelect;
 export type InsertStoryDraft = typeof storyDrafts.$inferInsert;
+
+export const storyRemovals = pgTable("story_removals", {
+  id: serial("id").primaryKey(),
+  storyId: integer("story_id").notNull().references(() => stories.id, { onDelete: "cascade" }),
+  reason: text("reason").notNull(),
+  removedBy: text("removed_by"),
+  removedAt: timestamp("removed_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  restoredAt: timestamp("restored_at", { mode: "string", withTimezone: true }),
+  restoredBy: text("restored_by"),
+  prevModState: text("prev_mod_state"),
+});
+export type StoryRemoval = typeof storyRemovals.$inferSelect;
+export type InsertStoryRemoval = typeof storyRemovals.$inferInsert;

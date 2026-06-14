@@ -46,7 +46,7 @@ import {
   Eye, ThumbsUp, ThumbsDown, Flag, Share2, AlertTriangle,
   Search, Settings as SettingsIcon, X, MessageSquare, Pencil,
   EyeOff, ExternalLink, LogOut, ChevronRight, Calendar, ArrowLeft,
-  FileText, Check, ChevronLeft,
+  FileText, Check, ChevronLeft, Trash2, Save, RotateCcw, Send,
 } from "lucide-react";
 
 // --- Types ---
@@ -70,6 +70,7 @@ interface CockpitItem {
   is_synthesis: boolean;
   is_people_profile: boolean;
   is_sports_recap: boolean;
+  tags: string[] | null;
   view_count: number;
   like_count: number;
   dislike_count: number;
@@ -111,10 +112,14 @@ function CockpitInner() {
   const [sort, setSort] = useState<SortId>("attention");
   const [search, setSearch] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
 
   return (
     <div className="min-h-screen bg-background">
-      <CockpitTopBar onOpenSettings={() => setShowSettings(true)} />
+      <CockpitTopBar
+        onOpenSettings={() => setShowSettings(true)}
+        onOpenTrash={() => setShowTrash(true)}
+      />
 
       <main className="mx-auto max-w-[1100px] px-6 py-6 space-y-6">
         <NeedsYouNow
@@ -141,13 +146,20 @@ function CockpitInner() {
       </main>
 
       {showSettings && <SettingsDrawer onClose={() => setShowSettings(false)} />}
+      {showTrash && <TrashPanel onClose={() => setShowTrash(false)} />}
     </div>
   );
 }
 
 // --- Top bar ---
 
-function CockpitTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
+function CockpitTopBar({
+  onOpenSettings,
+  onOpenTrash,
+}: {
+  onOpenSettings: () => void;
+  onOpenTrash: () => void;
+}) {
   const handleLogout = async () => {
     try { await apiRequest("POST", "/api/admin/logout"); } catch { /* ignore */ }
     setAdminToken(null);
@@ -167,6 +179,15 @@ function CockpitTopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            onClick={onOpenTrash}
+            className="inline-flex items-center gap-1.5 rounded-md border border-card-border bg-card px-2.5 py-1.5 text-xs hover-elevate text-muted-foreground"
+            data-testid="cockpit-open-trash"
+            title="Trash bin: removed stories with reasons, restorable"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Trash
+          </button>
           <button
             onClick={onOpenSettings}
             className="inline-flex items-center gap-1.5 rounded-md border border-card-border bg-card px-2.5 py-1.5 text-xs hover-elevate"
@@ -424,18 +445,8 @@ function CockpitStoryCard({ item }: { item: CockpitItem }) {
   const desk = item.desk as DeskId;
   const isUpcomingEvent = !!(item.on_calendar && item.starts_at);
 
-  const hide = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("PATCH", `/api/admin/stories/${item.id}`, {
-        modState: "rejected",
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["cockpit-feed"] });
-      queryClient.invalidateQueries({ queryKey: ["cockpit-summary"] });
-    },
-  });
+  const [showRemove, setShowRemove] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
 
   const attentionBadges: Array<{ label: string; tone: string; title?: string }> = [];
   if (item.report_count > 0) {
@@ -559,24 +570,22 @@ function CockpitStoryCard({ item }: { item: CockpitItem }) {
             drafts
           </button>
           <button
-            onClick={() => alert("Edit modal coming in the next pass.")}
+            onClick={() => setShowEdit(true)}
+            data-testid={`edit-${item.id}`}
             className="inline-flex items-center gap-1 rounded-md border border-card-border bg-card px-2 py-1 text-xs text-muted-foreground hover-elevate"
-            title="Edit story"
+            title="Edit fields + chat with the AI side-by-side"
           >
             <Pencil className="h-3 w-3" />
             edit
           </button>
           <button
-            onClick={() => {
-              if (confirm(`Hide story #${item.id}?`)) hide.mutate();
-            }}
-            disabled={hide.isPending}
-            data-testid={`hide-${item.id}`}
-            className="inline-flex items-center gap-1 rounded-md border border-card-border bg-card px-2 py-1 text-xs text-muted-foreground hover-elevate disabled:opacity-50"
-            title="Hide (mod_state=rejected)"
+            onClick={() => setShowRemove(true)}
+            data-testid={`remove-${item.id}`}
+            className="inline-flex items-center gap-1 rounded-md border border-card-border bg-card px-2 py-1 text-xs text-muted-foreground hover-elevate hover:text-red-500"
+            title="Remove (sends to trash, requires reason)"
           >
-            <EyeOff className="h-3 w-3" />
-            hide
+            <Trash2 className="h-3 w-3" />
+            remove
           </button>
         </div>
       </div>
@@ -589,6 +598,20 @@ function CockpitStoryCard({ item }: { item: CockpitItem }) {
         />
       )}
       {panel === "drafts" && <DraftsPanel storyId={item.id} />}
+
+      {showRemove && (
+        <RemoveDialog
+          storyId={item.id}
+          headline={item.headline}
+          onClose={() => setShowRemove(false)}
+        />
+      )}
+      {showEdit && (
+        <EditDialog
+          item={item}
+          onClose={() => setShowEdit(false)}
+        />
+      )}
     </article>
   );
 }
@@ -978,6 +1001,378 @@ function DraftsPanel({ storyId }: { storyId: number }) {
           Couldn't approve: {String((approve.error as any)?.message ?? approve.error)}
         </div>
       )}
+    </div>
+  );
+}
+
+
+// --- Phase 28: Remove dialog (required reason -> trash bin) ---
+
+function RemoveDialog({
+  storyId,
+  headline,
+  onClose,
+}: {
+  storyId: number;
+  headline: string;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const remove = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/admin/stories/${storyId}/remove`, {
+        reason: reason.trim(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ?? "Remove failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["cockpit-feed"] });
+      queryClient.invalidateQueries({ queryKey: ["cockpit-summary"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-trash"] });
+      onClose();
+    },
+    onError: (err: any) => setError(String(err?.message ?? err)),
+  });
+
+  const ok = reason.trim().length >= 8;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+      <div className="w-full max-w-lg rounded-lg border border-card-border bg-card shadow-xl">
+        <div className="flex items-start justify-between gap-2 border-b border-border/60 px-4 py-3">
+          <div>
+            <div className="flex items-center gap-2 text-red-500">
+              <Trash2 className="h-4 w-4" />
+              <span className="font-semibold">Remove story</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{headline}</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-muted-foreground hover-elevate"
+            data-testid={`remove-cancel-${storyId}`}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="space-y-3 px-4 py-3">
+          <div>
+            <label className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground">
+              Why are you removing this? (required, kept for the record)
+            </label>
+            <textarea
+              autoFocus
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. duplicate of #4081, wrong city attribution, misclassified obit, source is unreliable..."
+              rows={4}
+              className="mt-1 w-full rounded-md border border-card-border bg-background px-2 py-1.5 text-sm"
+              data-testid={`remove-reason-${storyId}`}
+            />
+            <div className="mt-1 flex justify-between text-[0.65rem]">
+              <span
+                className={
+                  ok ? "text-emerald-600" : "text-muted-foreground"
+                }
+              >
+                {ok ? "Reason looks good." : `Need at least 8 characters (${reason.trim().length} so far).`}
+              </span>
+              <span className="text-muted-foreground">Goes to Trash — restorable.</span>
+            </div>
+          </div>
+          {error && (
+            <div className="rounded-md border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-600">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-border/60 px-4 py-3">
+          <button
+            onClick={onClose}
+            className="rounded-md border border-card-border bg-card px-3 py-1.5 text-xs text-muted-foreground hover-elevate"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => remove.mutate()}
+            disabled={!ok || remove.isPending}
+            data-testid={`remove-confirm-${storyId}`}
+            className="inline-flex items-center gap-1 rounded-md bg-red-600 text-white px-3 py-1.5 text-xs font-semibold hover-elevate disabled:opacity-50"
+          >
+            <Trash2 className="h-3 w-3" />
+            {remove.isPending ? "Removing..." : "Remove to trash"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Phase 28: Trash panel ---
+
+interface TrashItem {
+  removal_id: number;
+  reason: string;
+  removed_by: string | null;
+  removed_at: string;
+  prev_mod_state: string | null;
+  story_id: number;
+  headline: string;
+  summary: string | null;
+  desk: string;
+  source_name: string;
+  source_url: string | null;
+  city_id: number;
+  published_at: string | null;
+}
+
+function TrashPanel({ onClose }: { onClose: () => void }) {
+  const { currentCity } = useAdminCity();
+  const citySlug = currentCity.slug;
+  const { data, refetch } = useQuery<{ items: TrashItem[] }>({
+    queryKey: ["admin-trash", citySlug],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/trash?city=${citySlug}`);
+      return res.json();
+    },
+  });
+
+  const restore = useMutation({
+    mutationFn: async (storyId: number) => {
+      const res = await apiRequest("POST", `/api/admin/stories/${storyId}/restore`);
+      return res.json();
+    },
+    onSuccess: () => {
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["cockpit-feed"] });
+      queryClient.invalidateQueries({ queryKey: ["cockpit-summary"] });
+    },
+  });
+
+  const items = data?.items ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-background/80 backdrop-blur-sm p-4 overflow-y-auto">
+      <div className="w-full max-w-3xl rounded-lg border border-card-border bg-card shadow-xl my-8">
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Trash2 className="h-4 w-4 text-muted-foreground" />
+            <span className="font-semibold">Trash</span>
+            <span className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground">
+              {currentCity.displayName} · {items.length} item{items.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-muted-foreground hover-elevate"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="px-4 py-3 space-y-2 max-h-[70vh] overflow-y-auto">
+          {items.length === 0 ? (
+            <div className="text-center py-12 text-sm text-muted-foreground">
+              Trash is empty.
+            </div>
+          ) : (
+            items.map((it) => (
+              <div
+                key={it.removal_id}
+                className="rounded-md border border-card-border bg-secondary/20 p-3 space-y-2"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="font-mono text-[0.55rem] uppercase tracking-[0.18em] text-muted-foreground mb-1">
+                      #{it.story_id} · {it.desk} · {it.source_name} ·{" "}
+                      removed {relativeTime(it.removed_at)}
+                      {it.removed_by && ` by ${it.removed_by}`}
+                    </div>
+                    <div className="text-sm font-semibold leading-snug">{it.headline}</div>
+                  </div>
+                  <button
+                    onClick={() => restore.mutate(it.story_id)}
+                    disabled={restore.isPending}
+                    className="shrink-0 inline-flex items-center gap-1 rounded-md border border-card-border bg-card px-2.5 py-1.5 text-xs hover-elevate disabled:opacity-50"
+                    title={`Restore (back to mod_state=${it.prev_mod_state ?? "New"})`}
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    restore
+                  </button>
+                </div>
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">
+                  <div className="font-mono text-[0.55rem] uppercase tracking-[0.18em] opacity-70 mb-0.5">
+                    reason
+                  </div>
+                  <div className="whitespace-pre-wrap leading-relaxed">{it.reason}</div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Phase 28: Edit dialog (fields + side-by-side chat) ---
+
+function EditDialog({
+  item,
+  onClose,
+}: {
+  item: CockpitItem;
+  onClose: () => void;
+}) {
+  const [headline, setHeadline] = useState(item.headline);
+  const [summary, setSummary] = useState(item.summary ?? "");
+  const [desk, setDesk] = useState(item.desk);
+  const [tagsText, setTagsText] = useState((item.tags ?? []).join(", "));
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const dirty =
+    headline !== item.headline ||
+    summary !== (item.summary ?? "") ||
+    desk !== item.desk ||
+    tagsText !== (item.tags ?? []).join(", ");
+
+  const save = useMutation({
+    mutationFn: async () => {
+      // PATCH accepts tags as a comma-separated string per editStorySchema.
+      const tagsCsv = tagsText
+        .split(",")
+        .map((t: string) => t.trim())
+        .filter((t: string) => t.length > 0)
+        .join(", ");
+      const res = await apiRequest("PATCH", `/api/admin/stories/${item.id}`, {
+        headline: headline.trim(),
+        summary: summary.trim(),
+        desk,
+        tags: tagsCsv,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ?? "Save failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["cockpit-feed"] });
+      queryClient.invalidateQueries({ queryKey: ["story-drafts", item.id] });
+      onClose();
+    },
+    onError: (err: any) => setSaveError(String(err?.message ?? err)),
+  });
+
+  const allDesks: DeskId[] = [
+    "city", "business", "crime", "sports", "health",
+    "entertainment", "people", "history",
+  ] as DeskId[];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-background/80 backdrop-blur-sm p-4 overflow-y-auto">
+      <div className="w-full max-w-5xl rounded-lg border border-card-border bg-card shadow-xl my-8">
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
+          <div className="flex items-center gap-2">
+            <Pencil className="h-4 w-4 text-muted-foreground" />
+            <span className="font-semibold">Edit story #{item.id}</span>
+            <span className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground">
+              {item.source_name}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-muted-foreground hover-elevate"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 lg:gap-px lg:bg-border/60 max-h-[75vh] overflow-hidden">
+          {/* LEFT: editable fields */}
+          <div className="bg-card p-4 space-y-3 overflow-y-auto">
+            <div className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground">
+              Manual edit
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Headline</label>
+              <input
+                value={headline}
+                onChange={(e) => setHeadline(e.target.value)}
+                className="mt-1 w-full rounded-md border border-card-border bg-background px-2 py-1.5 text-sm font-semibold"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Summary</label>
+              <textarea
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+                rows={6}
+                className="mt-1 w-full rounded-md border border-card-border bg-background px-2 py-1.5 text-sm leading-relaxed"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Desk</label>
+              <select
+                value={desk}
+                onChange={(e) => setDesk(e.target.value)}
+                className="mt-1 w-full rounded-md border border-card-border bg-background px-2 py-1.5 text-sm"
+              >
+                {allDesks.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">
+                Tags (comma-separated)
+              </label>
+              <input
+                value={tagsText}
+                onChange={(e) => setTagsText(e.target.value)}
+                placeholder="e.g. wildfire, evacuation, missoula"
+                className="mt-1 w-full rounded-md border border-card-border bg-background px-2 py-1.5 text-sm"
+              />
+            </div>
+            {saveError && (
+              <div className="rounded-md border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-600">
+                {saveError}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2 pt-2">
+              <p className="text-[0.65rem] text-muted-foreground">
+                Save writes directly to the live story. Use the chat for AI-drafted changes.
+              </p>
+              <button
+                onClick={() => save.mutate()}
+                disabled={!dirty || save.isPending}
+                data-testid={`edit-save-${item.id}`}
+                className="shrink-0 inline-flex items-center gap-1 rounded-md bg-emerald-600 text-white px-3 py-1.5 text-xs font-semibold hover-elevate disabled:opacity-50"
+              >
+                <Save className="h-3 w-3" />
+                {save.isPending ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </div>
+
+          {/* RIGHT: AI chat (reuses ChatThread) */}
+          <div className="bg-card p-4 space-y-2 overflow-y-auto">
+            <div className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-muted-foreground">
+              Talk to the AI editor
+            </div>
+            <p className="text-[0.7rem] text-muted-foreground leading-relaxed">
+              Ask for revisions in plain language. Each request creates a new draft version
+              in the Drafts tab. Type "approved" or hit Approve there to publish.
+            </p>
+            <ChatThread storyId={item.id} cityHint={item.city_id} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

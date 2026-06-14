@@ -96,6 +96,105 @@ export function registerCockpitRoutes(app: Express, requireAdmin: any) {
     }
   });
 
+  // ----- Phase 28: Remove + Trash + Restore -----
+  // Remove a story: requires reason; flips mod_state to 'trashed' and logs
+  // an entry on story_removals so we never lose the why.
+  app.post("/api/admin/stories/:id/remove", requireAdmin, async (req: any, res: any) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid id" });
+    const reason = String(req.body?.reason ?? "").trim();
+    if (reason.length < 8) {
+      return res.status(400).json({ error: "reason must be at least 8 characters" });
+    }
+    if (reason.length > 4000) {
+      return res.status(400).json({ error: "reason too long" });
+    }
+    const removedBy = (req as any).adminId ?? null;
+    try {
+      // Capture current state for restore.
+      const prev = (await db.execute(sql`
+        SELECT mod_state FROM stories WHERE id = ${id} LIMIT 1
+      `)) as unknown as { mod_state: string }[];
+      if (!prev[0]) return res.status(404).json({ error: "story not found" });
+      const prevState = prev[0].mod_state;
+      await db.execute(sql`
+        UPDATE stories SET mod_state = 'trashed' WHERE id = ${id}
+      `);
+      const inserted = (await db.execute(sql`
+        INSERT INTO story_removals (story_id, reason, removed_by, prev_mod_state)
+        VALUES (${id}, ${reason}, ${removedBy}, ${prevState})
+        RETURNING id, story_id, reason, removed_by, removed_at, prev_mod_state
+      `)) as unknown as any[];
+      res.json({ ok: true, removal: inserted[0] });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  // Restore a trashed story to its prior mod_state.
+  app.post("/api/admin/stories/:id/restore", requireAdmin, async (req: any, res: any) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid id" });
+    const restoredBy = (req as any).adminId ?? null;
+    try {
+      // Find the latest active (non-restored) removal record.
+      const active = (await db.execute(sql`
+        SELECT id, prev_mod_state FROM story_removals
+        WHERE story_id = ${id} AND restored_at IS NULL
+        ORDER BY removed_at DESC LIMIT 1
+      `)) as unknown as { id: number; prev_mod_state: string | null }[];
+      const prev = active[0]?.prev_mod_state ?? "New";
+      await db.execute(sql`
+        UPDATE stories SET mod_state = ${prev} WHERE id = ${id}
+      `);
+      if (active[0]) {
+        await db.execute(sql`
+          UPDATE story_removals
+          SET restored_at = NOW(), restored_by = ${restoredBy}
+          WHERE id = ${active[0].id}
+        `);
+      }
+      res.json({ ok: true, restoredTo: prev });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
+  // Trash bin: every active removal joined to its story.
+  app.get("/api/admin/trash", requireAdmin, async (req: any, res: any) => {
+    const cityId = await cityIdForSlug(req.query.city ? String(req.query.city) : null);
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const cityClause = cityId ? sql`AND s.city_id = ${cityId}` : sql``;
+    try {
+      const rows = (await db.execute(sql`
+        SELECT
+          r.id              AS removal_id,
+          r.reason,
+          r.removed_by,
+          r.removed_at,
+          r.prev_mod_state,
+          s.id              AS story_id,
+          s.headline,
+          s.summary,
+          s.desk,
+          s.source_name,
+          s.source_url,
+          s.city_id,
+          s.published_at
+        FROM story_removals r
+        JOIN stories s ON s.id = r.story_id
+        WHERE r.restored_at IS NULL
+          AND s.mod_state = 'trashed'
+          ${cityClause}
+        ORDER BY r.removed_at DESC
+        LIMIT ${limit}
+      `)) as unknown as any[];
+      res.json({ items: rows });
+    } catch (err: any) {
+      res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  });
+
   // GET /api/admin/cockpit/summary
   // One round-trip for the banner counts. Optionally city-scoped.
   app.get("/api/admin/cockpit/summary", requireAdmin, async (req: any, res: any) => {
@@ -107,10 +206,10 @@ export function registerCockpitRoutes(app: Express, requireAdmin: any) {
         SELECT
           (SELECT COUNT(*)::int FROM signal_aggregates sa
             JOIN stories s ON s.id = sa.story_id
-            WHERE sa.report_count > 0 AND s.mod_state <> 'rejected' ${cityFilter}) AS reports,
+            WHERE sa.report_count > 0 AND s.mod_state NOT IN ('rejected','trashed') ${cityFilter}) AS reports,
           (SELECT COUNT(*)::int FROM signal_aggregates sa
             JOIN stories s ON s.id = sa.story_id
-            WHERE sa.brigade_flag = true AND s.mod_state <> 'rejected' ${cityFilter}) AS brigade,
+            WHERE sa.brigade_flag = true AND s.mod_state NOT IN ('rejected','trashed') ${cityFilter}) AS brigade,
           (SELECT COUNT(*)::int FROM editorial_audits
             WHERE status = 'open' AND severity IN ('high','medium')) AS audits_open,
           (SELECT COUNT(*)::int FROM editorial_audits
@@ -118,7 +217,7 @@ export function registerCockpitRoutes(app: Express, requireAdmin: any) {
           (SELECT COUNT(*)::int FROM stories s
             WHERE s.mod_state = 'draft' ${cityFilter}) AS drafts,
           (SELECT COUNT(*)::int FROM stories s
-            WHERE s.mod_state <> 'rejected'
+            WHERE s.mod_state NOT IN ('rejected','trashed')
               AND s.published_at >= (NOW() - INTERVAL '24 hours')::text
               ${cityFilter}) AS fresh_24h
       `),
@@ -143,7 +242,7 @@ export function registerCockpitRoutes(app: Express, requireAdmin: any) {
     const limit = Math.min(Number(req.query.limit ?? 30), 100);
     const offset = Math.max(Number(req.query.offset ?? 0), 0);
 
-    const conds: string[] = ["s.mod_state <> 'rejected'"];
+    const conds: string[] = ["s.mod_state NOT IN ('rejected','trashed')"];
     if (cityId) conds.push(`s.city_id = ${cityId}`);
     if (desk) conds.push(`s.desk = '${desk.replace(/'/g, "")}'`);
     if (search) {
