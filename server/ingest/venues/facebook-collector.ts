@@ -36,7 +36,12 @@ export interface RawFacebookEvent {
 
 let warnedAboutMissingEnv = false;
 
-async function renderFacebookEvents(slug: string): Promise<string | null> {
+type RenderResult =
+  | { kind: "ok"; html: string }
+  | { kind: "fetch_failed"; reason: string }
+  | { kind: "env_missing" };
+
+async function renderFacebookEvents(slug: string): Promise<RenderResult> {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   const apiToken = process.env.CLOUDFLARE_API_TOKEN;
   if (!accountId || !apiToken) {
@@ -46,43 +51,53 @@ async function renderFacebookEvents(slug: string): Promise<string | null> {
       );
       warnedAboutMissingEnv = true;
     }
-    return null;
+    return { kind: "env_missing" };
   }
   const url = `https://www.facebook.com/${encodeURIComponent(slug)}/events`;
   const endpoint = `https://api.cloudflare.com/client/v4/accounts/${accountId}/browser-rendering/content`;
-  try {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 45_000);
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiToken}`,
-      },
-      body: JSON.stringify({
-        url,
-        viewport: { width: 1280, height: 2400 },
-        userAgent:
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        // Wait for Facebook's React SPA to finish loading the events grid.
-        // Without networkidle0 we sometimes get the page chrome but an empty
-        // grid because the GraphQL fetch hasn't completed yet.
-        gotoOptions: { waitUntil: "networkidle0", timeout: 30000 },
-      }),
-      signal: ctl.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) {
-      console.warn(`[facebook-collector] CF browser-rendering HTTP ${res.status} for ${slug}`);
-      return null;
+  // Up to 3 attempts on transient CF errors (429 from the 3-browser free-tier
+  // concurrency limit, 5xx from origin).
+  const maxAttempts = 3;
+  let lastReason = "unknown";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 45_000);
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${apiToken}`,
+        },
+        body: JSON.stringify({
+          url,
+          viewport: { width: 1280, height: 2400 },
+          userAgent:
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+          gotoOptions: { waitUntil: "networkidle0", timeout: 30000 },
+        }),
+        signal: ctl.signal,
+      });
+      clearTimeout(timer);
+      if (res.status === 429 || res.status >= 500) {
+        lastReason = `HTTP ${res.status}`;
+        console.warn(`[facebook-collector] ${lastReason} for ${slug} (attempt ${attempt}/${maxAttempts})`);
+        await new Promise((r) => setTimeout(r, 3000 + attempt * 1500));
+        continue;
+      }
+      if (!res.ok) return { kind: "fetch_failed", reason: `HTTP ${res.status}` };
+      const json = (await res.json()) as { success: boolean; result?: string };
+      if (!json.success || typeof json.result !== "string") {
+        return { kind: "fetch_failed", reason: "cf success=false" };
+      }
+      return { kind: "ok", html: json.result };
+    } catch (e) {
+      lastReason = (e as Error).message;
+      console.warn(`[facebook-collector] fetch error for ${slug} (attempt ${attempt}): ${lastReason}`);
+      await new Promise((r) => setTimeout(r, 3000 + attempt * 1500));
     }
-    const json = (await res.json()) as { success: boolean; result?: string };
-    if (!json.success || typeof json.result !== "string") return null;
-    return json.result;
-  } catch (e) {
-    console.warn(`[facebook-collector] CF browser-rendering fetch failed for ${slug}: ${(e as Error).message}`);
-    return null;
   }
+  return { kind: "fetch_failed", reason: lastReason };
 }
 
 /** Strip HTML to readable text and collapse whitespace. */
@@ -283,12 +298,24 @@ function parseEvents(visibleText: string, fbPageEventsUrl: string): RawFacebookE
   return out;
 }
 
-export async function collectFromVenueFacebook(venue: CuratedVenue): Promise<RawFacebookEvent[]> {
-  const slug = venue.facebookSource?.slug ?? (venue.websiteSource?.kind === "facebook_text" ? new URL(venue.websiteSource.listUrl).pathname.split("/").filter(Boolean)[0] : null);
-  if (!slug) return [];
-  const html = await renderFacebookEvents(slug);
-  if (!html) return [];
-  const text = htmlToText(html);
+/** Distinguishes "genuinely empty FB tab" from "fetch failed -- retry later". */
+export interface FacebookCollectResult {
+  events: RawFacebookEvent[];
+  fetchOk: boolean;
+  reason?: string;
+}
+
+export async function collectFromVenueFacebook(venue: CuratedVenue): Promise<FacebookCollectResult> {
+  const slug =
+    venue.facebookSource?.slug ??
+    (venue.websiteSource?.kind === "facebook_text"
+      ? new URL(venue.websiteSource.listUrl).pathname.split("/").filter(Boolean)[0]
+      : null);
+  if (!slug) return { events: [], fetchOk: true };
+  const render = await renderFacebookEvents(slug);
+  if (render.kind === "env_missing") return { events: [], fetchOk: true, reason: "env_missing" };
+  if (render.kind === "fetch_failed") return { events: [], fetchOk: false, reason: render.reason };
+  const text = htmlToText(render.html);
   const url = `https://www.facebook.com/${slug}/events`;
-  return parseEvents(text, url);
+  return { events: parseEvents(text, url), fetchOk: true };
 }

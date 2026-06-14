@@ -168,6 +168,12 @@ export interface VenueIngestReport {
   quarantined: number;
   skippedDeadLink: number;
   errors: string[];
+  /**
+   * True when at least one configured source actually fetched data
+   * successfully. When false, the cron caller should NOT update the
+   * cooldown row so we retry on the next tick instead of waiting 20h.
+   */
+  fetchOk: boolean;
 }
 
 export async function ingestVenue(venue: CuratedVenue): Promise<VenueIngestReport> {
@@ -181,22 +187,47 @@ export async function ingestVenue(venue: CuratedVenue): Promise<VenueIngestRepor
     quarantined: 0,
     skippedDeadLink: 0,
     errors: [],
+    fetchOk: false,
   };
 
   let website: RawVenueEvent[] = [];
   let facebook: RawFacebookEvent[] = [];
-  try {
-    website = await collectFromVenueWebsite(venue);
-    report.websiteCount = website.length;
-  } catch (e) {
-    report.errors.push(`website: ${(e as Error).message}`);
+  // Track fetch success per source. A venue is considered "fetchOk" if
+  // any source it has configured fetched without an explicit failure.
+  // A venue with no configured sources at all is trivially fetchOk.
+  let anyFetchSucceeded = false;
+  let anyFetchFailed = false;
+  const hasWebsiteSource = !!venue.websiteSource && venue.websiteSource.kind !== "facebook_text";
+  const hasFacebookSource = !!venue.facebookSource || venue.websiteSource?.kind === "facebook_text";
+  if (hasWebsiteSource) {
+    try {
+      website = await collectFromVenueWebsite(venue);
+      report.websiteCount = website.length;
+      anyFetchSucceeded = true; // website fetch returns [] on real errors but doesn't surface them; treat completion as success
+    } catch (e) {
+      anyFetchFailed = true;
+      report.errors.push(`website: ${(e as Error).message}`);
+    }
   }
-  try {
-    facebook = await collectFromVenueFacebook(venue);
-    report.facebookCount = facebook.length;
-  } catch (e) {
-    report.errors.push(`facebook: ${(e as Error).message}`);
+  if (hasFacebookSource) {
+    try {
+      const fbResult = await collectFromVenueFacebook(venue);
+      facebook = fbResult.events;
+      report.facebookCount = fbResult.events.length;
+      if (fbResult.fetchOk) {
+        anyFetchSucceeded = true;
+      } else {
+        anyFetchFailed = true;
+        report.errors.push(`facebook: ${fbResult.reason ?? "fetch failed"}`);
+      }
+    } catch (e) {
+      anyFetchFailed = true;
+      report.errors.push(`facebook: ${(e as Error).message}`);
+    }
   }
+  // The venue's overall fetchOk: any source succeeded, OR no source
+  // failed (trivial-success path for venues with no FB and no website).
+  report.fetchOk = anyFetchSucceeded || !anyFetchFailed;
 
   const merged = mergeSources(website, facebook);
   report.mergedCount = merged.length;
@@ -409,13 +440,19 @@ export async function tickVenueIngest(minHours = 20): Promise<{ ran: VenueIngest
       try {
         const report = await ingestVenue(v);
         ran.push(report);
-        await db.execute(sql`
-          INSERT INTO venue_ingest_runs (venue_id, last_run_at, last_report)
-          VALUES (${v.id}, NOW(), ${JSON.stringify(report)}::jsonb)
-          ON CONFLICT (venue_id) DO UPDATE
-            SET last_run_at = EXCLUDED.last_run_at,
-                last_report = EXCLUDED.last_report
-        `);
+        // Only update the cooldown when at least one source fetched
+        // successfully. If everything failed (e.g. CF Browser Rendering
+        // 429), leave the row stale so the next tick retries promptly
+        // instead of waiting 20h.
+        if (report.fetchOk) {
+          await db.execute(sql`
+            INSERT INTO venue_ingest_runs (venue_id, last_run_at, last_report)
+            VALUES (${v.id}, NOW(), ${JSON.stringify(report)}::jsonb)
+            ON CONFLICT (venue_id) DO UPDATE
+              SET last_run_at = EXCLUDED.last_run_at,
+                  last_report = EXCLUDED.last_report
+          `);
+        }
       } catch (err) {
         // Don't update cooldown on hard failure -- let the next tick try.
         ran.push({
@@ -428,6 +465,7 @@ export async function tickVenueIngest(minHours = 20): Promise<{ ran: VenueIngest
           quarantined: 0,
           skippedDeadLink: 0,
           errors: [`fatal: ${(err as Error).message}`],
+          fetchOk: false,
         });
       }
     }

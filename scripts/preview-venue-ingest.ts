@@ -21,8 +21,8 @@ async function main() {
       console.log(`    - ${e.startsAt}  ${e.title.slice(0, 60).padEnd(60)}  ${ticket}`);
     }
     const fb = await collectFromVenueFacebook(v);
-    console.log(`  facebook -> ${fb.length} events`);
-    for (const e of fb.slice(0, 10)) {
+    console.log(`  facebook -> ${fb.events.length} events (fetchOk=${fb.fetchOk}${fb.reason ? " " + fb.reason : ""})`);
+    for (const e of fb.events.slice(0, 10)) {
       console.log(`    - ${e.startsAt}  ${e.title.slice(0, 60).padEnd(60)}  raw="${e.rawTimeText}"`);
     }
   }
