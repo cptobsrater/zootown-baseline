@@ -1105,3 +1105,23 @@ export const insertHsGameSchema = createInsertSchema(hsGames).omit({
 });
 export type InsertHsGame = z.infer<typeof insertHsGameSchema>;
 export type HsGame = typeof hsGames.$inferSelect;
+
+// Phase 22: per-athlete cross-reference index.
+export const athletes = pgTable("athletes", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  hsTeamId: integer("hs_team_id").notNull().references(() => hsTeams.id),
+  sport: text("sport").notNull(),
+  cityId: integer("city_id").notNull().references(() => cities.id),
+  schoolName: text("school_name").notNull(),
+  shortName: text("short_name").notNull(),
+  firstSeenGame: integer("first_seen_game").references(() => hsGames.id),
+  lastSeenGame: integer("last_seen_game").references(() => hsGames.id),
+  winCount: integer("win_count").notNull().default(0),
+  appearanceCount: integer("appearance_count").notNull().default(0),
+  lastProfileStoryId: integer("last_profile_story_id").references(() => stories.id),
+  lastProfiledAt: timestamp("last_profiled_at", { mode: "string", withTimezone: true }),
+  createdAt: timestamp("created_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { mode: "string", withTimezone: true }).notNull().defaultNow(),
+});
+export type Athlete = typeof athletes.$inferSelect;

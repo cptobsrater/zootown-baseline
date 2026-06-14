@@ -23,7 +23,9 @@
     { "path": "/api/cron/rotate-history", "schedule": "0 9 * * 1" },
     { "path": "/api/cron/anniversary-surfacer", "schedule": "0 12 * * *" },
     { "path": "/api/cron/editorial-audit", "schedule": "30 12 * * *" },
-    { "path": "/api/cron/hs-sports", "schedule": "30 10,14,19,23 * * *" }
+    { "path": "/api/cron/hs-sports", "schedule": "30 10,14,19,23 * * *" },
+    { "path": "/api/cron/desk-sanity", "schedule": "0 13 * * *" },
+    { "path": "/api/cron/athlete-enrichment", "schedule": "0 11 * * *" }
   ],
   "functions": {
     "api/[...path].ts": { "maxDuration": 30 },
@@ -37,6 +39,8 @@
     "api/cron/anniversary-surfacer.ts": { "maxDuration": 30 },
     "api/cron/seed-historical-profiles.ts": { "maxDuration": 60 },
     "api/cron/editorial-audit.ts": { "maxDuration": 60 },
-    "api/cron/hs-sports.ts": { "maxDuration": 120 }
+    "api/cron/hs-sports.ts": { "maxDuration": 120 },
+    "api/cron/desk-sanity.ts": { "maxDuration": 120 },
+    "api/cron/athlete-enrichment.ts": { "maxDuration": 120 }
   }
 }

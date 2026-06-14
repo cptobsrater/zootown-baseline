@@ -356,6 +356,11 @@ export interface AuditReport {
   headline_length: number;
   totalInserted: number;
   totalSkipped: number;
+  autofix?: {
+    clustersExamined: number;
+    clustersFixed: number;
+    storiesHidden: number;
+  };
   durationMs: number;
 }
 
@@ -409,6 +414,22 @@ export async function runEditorialAudit(): Promise<AuditReport> {
   }
 
   const { inserted, skipped } = await persist(all);
+
+  // Phase 20: auto-fix high-confidence same-source duplicates.
+  // Runs after persist so the autofix sees fresh findings.
+  let autofix: AuditReport["autofix"];
+  try {
+    const { autofixDuplicates } = await import("./duplicate-autofix.js");
+    const af = await autofixDuplicates();
+    autofix = {
+      clustersExamined: af.clustersExamined,
+      clustersFixed: af.clustersFixed,
+      storiesHidden: af.storiesHidden,
+    };
+  } catch (err: any) {
+    console.error("[editorial-audit] autofix failed:", err?.message ?? err);
+  }
+
   return {
     duplicate: counts.duplicate ?? 0,
     desk_misroute: counts.desk_misroute ?? 0,
@@ -418,6 +439,7 @@ export async function runEditorialAudit(): Promise<AuditReport> {
     headline_length: counts.headline_length ?? 0,
     totalInserted: inserted,
     totalSkipped: skipped,
+    autofix,
     durationMs: Date.now() - t0,
   };
 }

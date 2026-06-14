@@ -1764,6 +1764,25 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json({ ok: true, storyId: created.id });
   });
 
+  // ----- GET /api/admin/stories?ids=1,2,3 -----
+  // Bulk-fetch stories by id. Used by the audit panel's duplicate cluster
+  // comparator.
+  app.get("/api/admin/stories", requireAdmin, async (req, res) => {
+    const idsParam = String(req.query.ids ?? "");
+    const ids = idsParam
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (ids.length === 0) return res.json([]);
+    if (ids.length > 50) return res.status(400).json({ error: "too many ids" });
+    const rows = (await db.execute(sql.raw(`
+      SELECT id, headline, source_name, source_url, desk, published_at, mod_state
+      FROM stories WHERE id IN (${ids.join(",")})
+      ORDER BY id
+    `))) as unknown as any[];
+    res.json(rows);
+  });
+
   // ----- Phase 17: editorial audit findings -----
   // List open (or filtered) audit findings. Admin dashboard polls this.
   app.get("/api/admin/audits", requireAdmin, async (req, res) => {

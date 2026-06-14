@@ -23,6 +23,7 @@ import { AddHistoryForm } from "@/components/admin/AddHistoryForm";
 import { JobModerationPanel } from "@/components/admin/JobModerationPanel";
 import { RulesPanel } from "@/components/admin/RulesPanel";
 import { StoryInbox } from "@/components/admin/StoryInbox";
+import { AuditsPanel } from "@/components/admin/AuditsPanel";
 import { type DeskId, parseTags, relativeTime } from "@/lib/format";
 import {
   ArrowLeft,
@@ -37,9 +38,10 @@ import {
   History,
   LogOut,
   Briefcase,
+  Stethoscope,
 } from "lucide-react";
 
-type AdminSection = "inbox" | "moderation" | "sources" | "rules" | "log" | "patterns" | "history" | "jobs";
+type AdminSection = "inbox" | "moderation" | "sources" | "rules" | "log" | "patterns" | "history" | "jobs" | "audits";
 
 const TABS: Array<{ id: ModState; label: string; intent: string }> = [
   { id: "draft", label: "Drafts", intent: "Awaiting review" },
@@ -205,6 +207,7 @@ function AdminInner() {
               {section === "patterns" && "Override Patterns"}
               {section === "history" && "History Pool"}
               {section === "jobs" && "Job Posts"}
+              {section === "audits" && "Editorial Audits"}
               {section === "rules" && "Classification Rules"}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground max-w-2xl">
@@ -231,6 +234,7 @@ function AdminInner() {
             <SectionTab active={section === "patterns"} onClick={() => setSection("patterns")} icon={<History className="h-3.5 w-3.5" />} label="Overrides" testId="admin-section-patterns" />
             <SectionTab active={section === "history"} onClick={() => setSection("history")} icon={<History className="h-3.5 w-3.5" />} label="History Pool" testId="admin-section-history" />
             <SectionTab active={section === "jobs"} onClick={() => setSection("jobs")} icon={<Briefcase className="h-3.5 w-3.5" />} label="Job posts" testId="admin-section-jobs" />
+            <SectionTab active={section === "audits"} onClick={() => setSection("audits")} icon={<Stethoscope className="h-3.5 w-3.5" />} label="Audits" testId="admin-section-audits" />
           </div>
         </div>
 
@@ -241,6 +245,7 @@ function AdminInner() {
         {section === "history" && <AddHistoryForm />}
         {section === "rules" && <RulesPanel />}
         {section === "jobs" && <JobModerationPanel />}
+        {section === "audits" && <AuditsPanel />}
 
         {section === "moderation" && (
           <>
