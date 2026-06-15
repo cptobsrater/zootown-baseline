@@ -183,8 +183,9 @@ async function callGemini(prompt: string): Promise<{ script: string; attribution
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.4, // factual, low creativity
-      maxOutputTokens: 1024,
-      responseMimeType: "application/json",
+      maxOutputTokens: 1500,
+      // No responseMimeType - the json mode has been silently corrupting
+      // strings that contain double quotes. We parse + repair manually.
     },
   };
   const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
@@ -203,34 +204,52 @@ async function callGemini(prompt: string): Promise<{ script: string; attribution
   const lb = cleaned.lastIndexOf("}");
   if (fb >= 0 && lb > fb) cleaned = cleaned.slice(fb, lb + 1);
 
-  // Gemini occasionally returns unescaped quotes inside the script string.
-  // Try strict parse first, then fall back to a tolerant extraction that
-  // pulls the script with a regex.
+  // Try strict parse first.
   try {
     const parsed = JSON.parse(cleaned);
     return {
       script: String(parsed.script ?? "").trim(),
       attributions: Array.isArray(parsed.attributions) ? parsed.attributions : [],
     };
-  } catch (parseErr) {
-    // Tolerant fallback: grab the script field with a non-greedy regex that
-    // stops at the next top-level field. Best effort - logs to caller.
-    const scriptMatch = cleaned.match(/"script"\s*:\s*"([\s\S]*?)"\s*,\s*"attributions"/);
-    if (scriptMatch) {
-      const rawScript = scriptMatch[1]
-        .replace(/\\n/g, " ")
-        .replace(/\\"/g, '"')
-        .replace(/\s+/g, " ")
-        .trim();
-      // Try to extract attributions array too
-      const attribMatch = cleaned.match(/"attributions"\s*:\s*(\[[\s\S]*\])/);
-      let attributions: any[] = [];
-      if (attribMatch) {
-        try { attributions = JSON.parse(attribMatch[1]); } catch { /* ignore */ }
+  } catch {
+    // Fallback 1: tolerant regex extraction. Find script value as the chunk
+    // between the first "script": " and the LAST " before "attributions" or
+    // end-of-string. Handles unescaped internal quotes.
+    const headIdx = cleaned.search(/"script"\s*:\s*"/);
+    if (headIdx >= 0) {
+      const valueStart = cleaned.indexOf('"', cleaned.indexOf(":", headIdx)) + 1;
+      const attribIdx = cleaned.search(/"attributions"\s*:/);
+      // The end of the script value is the closing ", just before the comma
+      // and "attributions" key (if present) or the closing brace.
+      let valueEnd: number;
+      if (attribIdx > valueStart) {
+        valueEnd = cleaned.lastIndexOf('"', attribIdx - 1);
+        // step back over the comma if present
+        valueEnd = cleaned.lastIndexOf('"', valueEnd);
+        // simpler: scan backward from attribIdx for the nearest quote
+        for (let i = attribIdx - 1; i > valueStart; i--) {
+          if (cleaned[i] === '"') { valueEnd = i; break; }
+        }
+      } else {
+        valueEnd = cleaned.lastIndexOf('"');
       }
-      return { script: rawScript, attributions };
+      if (valueEnd > valueStart) {
+        const raw = cleaned.slice(valueStart, valueEnd)
+          .replace(/\\n/g, " ")
+          .replace(/\\"/g, '"')
+          .replace(/\s+/g, " ")
+          .trim();
+        const attribMatch = cleaned.match(/"attributions"\s*:\s*(\[[\s\S]*?\])/);
+        let attributions: any[] = [];
+        if (attribMatch) {
+          try { attributions = JSON.parse(attribMatch[1]); } catch { /* ignore */ }
+        }
+        return { script: raw, attributions };
+      }
     }
-    throw parseErr;
+    // Absolute last resort: return the whole cleaned text as the script.
+    // Validator will catch it and we'll retry.
+    return { script: cleaned.slice(0, 4000), attributions: [] };
   }
 }
 
