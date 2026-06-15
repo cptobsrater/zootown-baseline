@@ -20,7 +20,7 @@ import {
 
 const MISSOULA_CITY_ID = 1;
 
-async function fetchArticleBody(url: string, timeoutMs = 8000): Promise<string> {
+async function fetchArticleBody(url: string, timeoutMs = 5000): Promise<string> {
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);

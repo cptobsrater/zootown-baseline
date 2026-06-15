@@ -336,7 +336,11 @@ export async function generateZootownMinuteScript(
   let lastScript = "";
   let lastCall: GeminiCallResult = { text: "", rawChars: 0 };
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  // 2 attempts max: one fresh, one with validator feedback. Gemini truncation
+  // tends to repeat across attempts, so deeper retries waste budget without
+  // changing the outcome.
+  const MAX_ATTEMPTS = 2;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const prompt = buildPrompt(stories, retryNote);
     lastCall = await callGemini(prompt);
     lastScript = lastCall.text;
@@ -383,7 +387,7 @@ export async function generateZootownMinuteScript(
     }
 
     warnings.push(`attempt ${attempt}: ${problems.join(" | ")}`);
-    if (attempt < 3) retryNote = problems.join("\n");
+    if (attempt < MAX_ATTEMPTS) retryNote = problems.join("\n");
   }
 
   // Out of attempts - return the last try with full warnings.
@@ -392,7 +396,7 @@ export async function generateZootownMinuteScript(
     script: lastScript,
     word_count: wc,
     estimated_seconds: Math.round((wc / WPM_TARGET) * 60 * 10) / 10,
-    attempts: 3,
+    attempts: MAX_ATTEMPTS,
     warnings,
     anchor_name: ANCHOR_NAME,
     raw_chars: lastCall.rawChars,
