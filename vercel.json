@@ -44,6 +44,6 @@
     "api/cron/athlete-enrichment.ts": { "maxDuration": 120 },
     "api/cron/autofix-dupes.ts": { "maxDuration": 120 },
     "api/cron/retire-health.ts": { "maxDuration": 300 },
-    "api/admin/preview-minute-script.ts": { "maxDuration": 60 }
+    "api/admin/preview-minute-script.ts": { "maxDuration": 120 }
   }
 }
