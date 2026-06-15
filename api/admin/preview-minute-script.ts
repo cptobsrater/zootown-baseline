@@ -127,6 +127,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       target_window: { min: 280, max: 360, wpm: 150 },
       attempts_used: result.attempts,
       validator_warnings: result.warnings,
+      finish_reason: result.finish_reason,
+      raw_response_chars: result.raw_chars,
       script_markdown: result.script,
     });
   } catch (err: any) {

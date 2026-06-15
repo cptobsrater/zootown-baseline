@@ -93,6 +93,10 @@ export interface ScriptResult {
   attempts: number;
   warnings: string[];
   anchor_name: string;
+  /** Raw character length of last Gemini response, for debugging truncation. */
+  raw_chars: number;
+  /** Gemini finishReason on the last call: STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER. */
+  finish_reason?: string;
 }
 
 const ANCHOR_NAME = "Nicholas";
@@ -270,14 +274,22 @@ OUTPUT:
 Plain markdown. Match the reference structure exactly. No preamble before the anchor intro. No commentary after the outro. Start with "### Anchor intro" and end with "You're watching ZooTown News. We'll be right back."${retry}`;
 }
 
-async function callGemini(prompt: string): Promise<string> {
+interface GeminiCallResult {
+  text: string;
+  finishReason?: string;
+  rawChars: number;
+}
+
+async function callGemini(prompt: string): Promise<GeminiCallResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.5,
-      maxOutputTokens: 2000,
+      // Generous budget: 5 segments x ~80 words each plus intro/outro plus
+      // attribution markup easily fits in 4000 output tokens.
+      maxOutputTokens: 4000,
     },
   };
 
@@ -301,9 +313,16 @@ async function callGemini(prompt: string): Promise<string> {
   if (!res || !res.ok) throw new Error(lastErr || "Gemini unavailable");
 
   const data = (await res.json()) as any;
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  // Strip any leading/trailing fences just in case.
-  return text.replace(/^\s*```(?:markdown|md)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const cand = (data?.candidates ?? [])[0] ?? {};
+  const finishReason = cand?.finishReason;
+  const text = cand?.content?.parts?.[0]?.text ?? "";
+  // Surface truncation diagnostics so callers can decide whether to retry
+  // with a bigger budget or different prompt.
+  if (finishReason && finishReason !== "STOP") {
+    console.warn(`[minute-script] Gemini finishReason=${finishReason} text_chars=${text.length}`);
+  }
+  const cleaned = text.replace(/^\s*```(?:markdown|md)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  return { text: cleaned, finishReason, rawChars: text.length };
 }
 
 export async function generateZootownMinuteScript(
@@ -315,10 +334,12 @@ export async function generateZootownMinuteScript(
   const warnings: string[] = [];
   let retryNote: string | undefined;
   let lastScript = "";
+  let lastCall: GeminiCallResult = { text: "", rawChars: 0 };
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     const prompt = buildPrompt(stories, retryNote);
-    lastScript = await callGemini(prompt);
+    lastCall = await callGemini(prompt);
+    lastScript = lastCall.text;
 
     const wc = countWords(lastScript);
     const banned = findBannedPhrases(lastScript);
@@ -356,6 +377,8 @@ export async function generateZootownMinuteScript(
         attempts: attempt,
         warnings,
         anchor_name: ANCHOR_NAME,
+        raw_chars: lastCall.rawChars,
+        finish_reason: lastCall.finishReason,
       };
     }
 
@@ -372,5 +395,7 @@ export async function generateZootownMinuteScript(
     attempts: 3,
     warnings,
     anchor_name: ANCHOR_NAME,
+    raw_chars: lastCall.rawChars,
+    finish_reason: lastCall.finishReason,
   };
 }
