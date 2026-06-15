@@ -1,32 +1,32 @@
 /**
- * ZooTown Minute - script generator.
+ * ZooTown News - daily anchor script generator (v2).
  *
- * Input:  5 ranked stories (headline, summary, source_name, source_url, published_at).
- *         Optional `articleBodies` keyed by story id with cleaned source text.
- * Output: a 90-second anchor script (target 215-230 words, 150 wpm cadence)
- *         plus per-story attribution metadata for the disclosure card.
+ * Canonical voice + structure: server/learning/zootown-minute-reference.md
  *
- * Editorial law (enforced in the prompt and re-checked after):
- *   1. STRICT word count: 215 <= words <= 230. The post-call validator
- *      rejects and re-asks if Gemini drifts.
- *   2. Every story must be attributed to its source by name. "Missoulian
- *      reports" / "Per the Missoula Current" / "According to the
- *      Independent Record".
- *   3. Conversational but OBJECTIVE. News anchor, not influencer. No
- *      first-person opinions, no rhetorical questions, no breathless
- *      hype, no editorial framing ("shockingly", "incredibly").
- *   4. Banned AI-isms: "a testament to", "delving into", "in today's
- *      fast-paced world", "navigate the complexities", "shed light on",
- *      "in the realm of", "as we delve", "underscores", "underscoring",
- *      "moreover", "furthermore", "tapestry", "landscape" (as cliche),
- *      "ever-evolving", "game-changer", "robust" (as filler).
- *   5. No invented facts. If a detail isn't in the provided source text,
- *      it must not appear in the script. Numbers, names, dates, locations
- *      get repeated verbatim from the source.
- *   6. Plain American English. Contractions are fine. No em-dashes (HeyGen
- *      mis-renders them as awkward pauses); use commas or sentence breaks.
+ * What this returns:
+ *   Markdown anchor script with:
+ *     - Anchor intro
+ *     - Five story segments, each with body + stage cue + kicker
+ *     - Toss-to-weather outro
+ *   Each meaningful claim gets an inline source attribution in
+ *   `[[slug](url)]` form, attribution slug never `zootownhub`.
+ *
+ * Editorial rules (enforced via prompt + validator):
+ *   - American English, conversational but objective. No first-person opinion.
+ *   - Banned AI-isms ("a testament to", "delving into", "underscores", etc).
+ *   - No em-dashes. Use commas / sentence breaks.
+ *   - No invented facts. If a detail is not in the source body, omit it.
+ *     Use [BRACKETED PLACEHOLDERS] only when essential information is missing.
+ *   - Inline source attribution required on each claim.
+ *   - Sources may never be zootownhub.com (it is the destination, not the wire).
+ *     The toss-to-weather line at the end MAY mention zootownhub.com as the
+ *     destination ("more tonight on zootownhub.com").
+ *   - Each story is its own self-contained segment. Stays in rotation until
+ *     the underlying event happens OR a material detail changes.
+ *
+ * Output is markdown, not JSON. JSON mode was too fragile against
+ * Gemini's quote-escaping bugs.
  */
-import type { Story } from "@shared/schema";
 
 const GEMINI_MODEL = "gemini-flash-latest";
 const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
@@ -65,18 +65,24 @@ const BANNED_PHRASES = [
   "at the end of the day",
 ];
 
-const WORD_MIN = 215;
-const WORD_MAX = 230;
+const WORD_MIN = 280;
+const WORD_MAX = 360;
 const WPM_TARGET = 150;
 
 export interface ScriptStoryInput {
   id: number;
+  /** Stable key for segment-persistence. e.g. "zootown-festival-2026". */
+  segment_key?: string;
+  /** Category for tone selection: festival | safety | civic | recreation | community | sports. */
+  category?: string;
   headline: string;
   summary: string;
   source_name: string;
   source_url: string;
+  /** Short source slug used in [[slug](url)] attributions. e.g. "missoulian", "kpax". */
+  source_slug?: string;
   published_at: string;
-  /** Optional fetched + cleaned article body. Higher quality scripts when provided. */
+  /** Optional fetched + cleaned article body. */
   article_body?: string;
 }
 
@@ -84,26 +90,80 @@ export interface ScriptResult {
   script: string;
   word_count: number;
   estimated_seconds: number;
-  attributions: Array<{ story_id: number; source_name: string; source_url: string }>;
   attempts: number;
   warnings: string[];
+  anchor_name: string;
 }
+
+const ANCHOR_NAME = "Nicholas";
 
 function countWords(s: string): number {
-  return s.trim().split(/\s+/).filter(Boolean).length;
-}
-
-function stripPunctForCheck(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9'\- ]+/g, " ");
+  // Count words excluding inline markdown attributions [[...](...)] and stage cues
+  // wrapped in *(...)* so we measure spoken-word duration accurately.
+  const spoken = s
+    .replace(/\[\[[^\]]+\]\([^)]+\)\]/g, "") // strip [[slug](url)]
+    .replace(/\*\([^)]+\)\*/g, "") // strip *(stage cue)*
+    .replace(/^#+\s.*$/gm, "") // strip headings
+    .replace(/\[[A-Z][A-Z0-9 _-]+\]/g, ""); // strip [BRACKET PLACEHOLDER]
+  return spoken.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function findBannedPhrases(script: string): string[] {
-  const hay = stripPunctForCheck(script);
+  const hay = script.toLowerCase().replace(/[^a-z0-9'\- ]+/g, " ");
   const hits: string[] = [];
   for (const phrase of BANNED_PHRASES) {
     if (hay.includes(phrase.toLowerCase())) hits.push(phrase);
   }
   return hits;
+}
+
+function findEmDashes(script: string): boolean {
+  // Allow en-dashes only inside compound modifiers between letters (e.g. "below-market-rate").
+  // Strict ban on em-dashes everywhere.
+  if (/\u2014/.test(script)) return true;
+  // Strip compound-word hyphens then look for en-dash usage as a pause-pause character.
+  return /\u2013/.test(script);
+}
+
+function findZootownHubAttribution(script: string): boolean {
+  // zootownhub.com is allowed ONLY in the toss-to-weather outro as a
+  // destination link, not as a story source attribution. Strict check:
+  // any [[zootownhub](...)] anywhere in the story segments (before the
+  // toss outro) is a violation. We approximate by allowing it only when
+  // it follows the phrase "on zootownhub.com" in the same sentence.
+  const matches = Array.from(script.matchAll(/\[\[zootownhub\]\([^)]+\)\]/gi));
+  if (matches.length === 0) return false;
+  // If it appears, ensure each occurrence is preceded by "on zootownhub.com" or "channels".
+  for (const m of matches) {
+    const start = Math.max(0, (m.index ?? 0) - 80);
+    const ctx = script.slice(start, (m.index ?? 0) + 80).toLowerCase();
+    if (!ctx.includes("zootownhub.com") || !ctx.includes("on zootownhub.com")) {
+      return true; // violation
+    }
+  }
+  return false;
+}
+
+function deriveSourceSlug(sourceName: string, fallbackUrl: string): string {
+  const lower = sourceName.toLowerCase();
+  if (lower.includes("missoulian")) return "missoulian";
+  if (lower.includes("kpax")) return "kpax";
+  if (lower.includes("kgvo")) return "kgvo";
+  if (lower.includes("missoula current")) return "missoulacurrent";
+  if (lower.includes("nbc montana")) return "nbcmontana";
+  if (lower.includes("independent record")) return "independentrecord";
+  if (lower.includes("billings gazette")) return "billingsgazette";
+  if (lower.includes("destination missoula")) return "destinationmissoula";
+  if (lower.includes("missoula downtown partnership")) return "missouladowntown";
+  if (lower.includes("zootown festival")) return "zootownfestival";
+  if (lower.includes("fairgrounds")) return "missoulacountyfairgrounds";
+  // Fallback: extract bare domain
+  try {
+    const host = new URL(fallbackUrl).hostname.replace(/^www\./, "").replace(/\.com$|\.org$|\.net$/i, "");
+    return host.split(".")[0] || "source";
+  } catch {
+    return "source";
+  }
 }
 
 function buildPrompt(stories: ScriptStoryInput[], retryNote?: string): string {
@@ -115,13 +175,20 @@ function buildPrompt(stories: ScriptStoryInput[], retryNote?: string): string {
     timeZone: "America/Denver",
   });
 
-  const storyBlock = stories
+  // Normalize each story input.
+  const enriched = stories.map((s) => ({
+    ...s,
+    source_slug: s.source_slug || deriveSourceSlug(s.source_name, s.source_url),
+  }));
+
+  const storyBlock = enriched
     .map((s, i) => {
       const body = s.article_body ? s.article_body.slice(0, 2500) : s.summary;
-      return `STORY ${i + 1} (id ${s.id})
+      return `STORY ${i + 1} (id ${s.id}, category=${s.category || "general"}${s.segment_key ? `, segment_key=${s.segment_key}` : ""})
 HEADLINE: ${s.headline}
-SOURCE: ${s.source_name}
-URL: ${s.source_url}
+SOURCE NAME: ${s.source_name}
+SOURCE SLUG (use in [[slug](url)] attributions): ${s.source_slug}
+SOURCE URL: ${s.source_url}
 PUBLISHED: ${s.published_at}
 ARTICLE TEXT:
 ${body}
@@ -132,63 +199,88 @@ ${body}
   const bannedList = BANNED_PHRASES.map((p) => `  - "${p}"`).join("\n");
 
   const retry = retryNote
-    ? `\n\nIMPORTANT - YOUR PREVIOUS ATTEMPT WAS REJECTED:
+    ? `\n\nIMPORTANT - YOUR PREVIOUS ATTEMPT WAS REJECTED. FIX THESE ISSUES:
 ${retryNote}
-Try again. Same five stories. Fix the issue. Same JSON output shape.\n`
+Try again. Same stories. Same format. Fix the issue. Output the corrected script in the same markdown structure.\n`
     : "";
 
-  return `You are writing tonight's ZooTown Minute - a 90-second evening news segment for Missoula, Montana, broadcast at 5:00 PM Mountain Time. Tonight is ${dateStr}.
+  return `You are writing tonight's ZooTown News evening segment. Tonight is ${dateStr}. The anchor on camera is ${ANCHOR_NAME}.
 
-YOUR JOB
-Write the spoken script for an anchor (Nicholas) to read on camera. Five stories. Cold open, five segments with clean transitions, sign-off. The audience is Missoula residents catching the news on their commute home.
+You are matching an editorial voice that has been carefully defined. Study the reference structure below and copy its rhythm, tone, attribution style, and stage-cue pattern. Then write tonight's script using the supplied stories.
 
-HARD CONSTRAINTS
-  1. Word count: between ${WORD_MIN} and ${WORD_MAX} words total. This delivers ~90 seconds at ${WPM_TARGET} wpm. Count every word including articles. Do not exceed ${WORD_MAX}. Do not fall below ${WORD_MIN}.
-  2. Every story must include explicit source attribution by outlet name. Examples: "the Missoulian reports", "according to the Missoula Current", "per the Independent Record", "KGVO News says". Pick the phrasing that flows.
-  3. Cover all five stories. Lead with the most important. End with the lightest.
-  4. No invented facts. Every name, number, date, dollar amount, and location must appear in the article text I gave you. If the source didn't say it, the script doesn't say it.
-  5. Conversational but objective. American English. Contractions OK. No rhetorical questions. No editorial framing ("shockingly", "remarkably", "in a stunning move"). No first-person opinion. No second-person ("you should care about this").
-  6. Banned phrases. Do NOT use any of these, in any form:
+REFERENCE STRUCTURE (you MUST match this exactly):
+
+### Anchor intro
+"Good evening, Missoula. I'm ${ANCHOR_NAME}, and this is ZooTown News, your look at what's happening right now across the Garden City and Western Montana."
+
+*(Pause, small smile.)*
+
+"From [tease segment 1], to [tease segment 2], and [tease feel-good or closing theme], we've got you covered. Let's start with tonight's top stories."
+
+### Story 1 — [short slug describing the lead, e.g. "Zootown Festival lead"]
+"[Opening sentence. Subject-verb-object. Plain language. The news of the story.]" [[source_slug](source_url)]
+
+"[Second sentence. Why it matters. Key facts, numbers, or quotes paraphrased from the source.]" [[source_slug](source_url)]
+
+"[Third sentence. Additional context, what comes next, or stakeholder voice.]" [[source_slug](source_url)]
+
+*(Stage cue: tone direction for the anchor, e.g. "Beat, friendly tone." or "Calm but serious." or "Warm smile.")*
+
+"[Kicker line: one short sentence that closes the segment with warmth, wit, or weight.]"
+
+### Story 2 — [slug]
+[same shape as Story 1]
+
+### Story 3 — [slug]
+[same shape]
+
+### Story 4 — [slug]
+[same shape]
+
+### Story 5 — [slug]
+[same shape]
+
+### Toss to weather
+"Those are your top stories. We'll have much more tonight on zootownhub.com and on our social channels." [[zootownhub](https://www.zootownhub.com/)]
+
+"Coming up after the break: your full forecast as Missoula [contextual hook tied to tonight's stories]. [METEOROLOGIST NAME] has a first look at what you can expect."
+
+*(Beat.)*
+
+"You're watching ZooTown News. We'll be right back."
+
+HARD RULES:
+  1. Word count between ${WORD_MIN} and ${WORD_MAX} for the spoken text (we do NOT count the inline [[slug](url)] attributions or the *(stage cues)* or section headings toward word count - those are markup, not spoken). Target ~310 spoken words for ~125 seconds at ${WPM_TARGET} wpm.
+  2. EVERY claim that comes from a source must end with [[slug](url)] inline. The slug for each story is specified in the input. Use the source's actual URL. Multiple attributions in one sentence are fine when the claim came from multiple sources.
+  3. Sources may NEVER be zootownhub.com inside story segments. zootownhub.com is allowed ONLY in the toss-to-weather outro as the destination link ("more tonight on zootownhub.com").
+  4. American English. Contractions OK. No first-person opinion. No second-person ("you" is OK in service-of-information sentences like "if you're planning to hit the trails"). No rhetorical questions in story bodies (kickers may use a rhetorical flourish sparingly). No editorial framing words like "shockingly", "remarkably", "in a stunning move".
+  5. NO em-dashes anywhere. Replace with commas or sentence breaks. En-dashes are fine inside compound modifiers like "below-market-rate".
+  6. NO invented facts. Every name, number, dollar amount, date, location, or quote must come from the supplied source article text. If essential information is missing from the source, use [BRACKETED ALL-CAPS PLACEHOLDER] like [TEEN NAME] or [METEOROLOGIST NAME]. Do not fabricate.
+  7. Banned phrases (use NONE of these, in any form):
 ${bannedList}
-  7. No em-dashes (-). Use commas or sentence breaks. Em-dashes cause HeyGen to mis-pace.
-  8. Open with a tight cold open ("Good evening, Missoula. I'm Nicholas. Here's your ZooTown Minute for ${dateStr}.")
-  9. End with a clean sign-off ("That's your ZooTown Minute. I'm Nicholas, we'll see you tomorrow.")
+  8. Each story is self-contained. They do not blur into each other. Each story has its own ### heading, its own body sentences, its own stage cue, and its own kicker line.
+  9. Stage cues are always in this exact format: *(...)* on their own line. Examples: *(Pause, small smile.)*, *(Beat, friendly tone.)*, *(Shift tone: calm but serious.)*, *(Neutral, inviting tone.)*, *(Friendly, outdoorsy tone.)*, *(Warm smile.)*, *(Beat.)*
+  10. Story slugs in the ### headings should be short and descriptive (3-5 words), matching the story's theme. Examples: "Zootown Festival lead", "City safety / policing", "Housing / city hall", "Environment / recreation", "Community / feel-good".
 
-CADENCE GUIDE
-  - First sentence of each story: the news. The thing that happened. Subject, verb, plain.
-  - Second sentence: the why or the detail that matters.
-  - Optional third sentence: attribution + one more fact, only if there's room.
-  - Transitions are short. "Next." "Across town." "Also today." "In other news." Don't write essays between stories.
-
-TONIGHT'S FIVE STORIES (in priority order):
+TONIGHT'S STORIES (in priority order - Story 1 is the lead):
 
 ${storyBlock}
 
-OUTPUT
-Return STRICT JSON only. No prose outside the JSON. No markdown fences.
-INSIDE the "script" string value do NOT use any double-quote characters. Paraphrase any quoted source material instead of quoting it. If you must include a possessive 's, that's fine. Double quotes inside the script field break JSON parsing.
-
-{
-  "script": "<the full script as a single string, anchor's spoken words only, no stage directions, no [pause] tags>",
-  "attributions": [
-    { "story_id": <id>, "source_name": "<name>", "source_url": "<url>" }
-  ]
-}${retry}`;
+OUTPUT:
+Plain markdown. Match the reference structure exactly. No preamble before the anchor intro. No commentary after the outro. Start with "### Anchor intro" and end with "You're watching ZooTown News. We'll be right back."${retry}`;
 }
 
-async function callGemini(prompt: string): Promise<{ script: string; attributions: any[] }> {
+async function callGemini(prompt: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
-      temperature: 0.4, // factual, low creativity
-      maxOutputTokens: 1500,
-      // No responseMimeType - the json mode has been silently corrupting
-      // strings that contain double quotes. We parse + repair manually.
+      temperature: 0.5,
+      maxOutputTokens: 2000,
     },
   };
-  // Retry on transient 5xx / 429. Gemini 'high demand' (503) is very common.
+
   let res: Response | null = null;
   let lastErr = "";
   for (let i = 0; i < 4; i++) {
@@ -201,73 +293,19 @@ async function callGemini(prompt: string): Promise<{ script: string; attribution
     const t = await res.text().catch(() => "");
     lastErr = `Gemini HTTP ${res.status}: ${t.slice(0, 200)}`;
     if (res.status === 503 || res.status === 429 || res.status >= 500) {
-      // exponential backoff: 2s, 4s, 8s
       await new Promise((r) => setTimeout(r, 2000 * (1 << i)));
       continue;
     }
     throw new Error(lastErr);
   }
   if (!res || !res.ok) throw new Error(lastErr || "Gemini unavailable");
+
   const data = (await res.json()) as any;
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  let cleaned = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-  const fb = cleaned.indexOf("{");
-  const lb = cleaned.lastIndexOf("}");
-  if (fb >= 0 && lb > fb) cleaned = cleaned.slice(fb, lb + 1);
-
-  // Try strict parse first.
-  try {
-    const parsed = JSON.parse(cleaned);
-    return {
-      script: String(parsed.script ?? "").trim(),
-      attributions: Array.isArray(parsed.attributions) ? parsed.attributions : [],
-    };
-  } catch {
-    // Fallback 1: tolerant regex extraction. Find script value as the chunk
-    // between the first "script": " and the LAST " before "attributions" or
-    // end-of-string. Handles unescaped internal quotes.
-    const headIdx = cleaned.search(/"script"\s*:\s*"/);
-    if (headIdx >= 0) {
-      const valueStart = cleaned.indexOf('"', cleaned.indexOf(":", headIdx)) + 1;
-      const attribIdx = cleaned.search(/"attributions"\s*:/);
-      // The end of the script value is the closing ", just before the comma
-      // and "attributions" key (if present) or the closing brace.
-      let valueEnd: number;
-      if (attribIdx > valueStart) {
-        valueEnd = cleaned.lastIndexOf('"', attribIdx - 1);
-        // step back over the comma if present
-        valueEnd = cleaned.lastIndexOf('"', valueEnd);
-        // simpler: scan backward from attribIdx for the nearest quote
-        for (let i = attribIdx - 1; i > valueStart; i--) {
-          if (cleaned[i] === '"') { valueEnd = i; break; }
-        }
-      } else {
-        valueEnd = cleaned.lastIndexOf('"');
-      }
-      if (valueEnd > valueStart) {
-        const raw = cleaned.slice(valueStart, valueEnd)
-          .replace(/\\n/g, " ")
-          .replace(/\\"/g, '"')
-          .replace(/\s+/g, " ")
-          .trim();
-        const attribMatch = cleaned.match(/"attributions"\s*:\s*(\[[\s\S]*?\])/);
-        let attributions: any[] = [];
-        if (attribMatch) {
-          try { attributions = JSON.parse(attribMatch[1]); } catch { /* ignore */ }
-        }
-        return { script: raw, attributions };
-      }
-    }
-    // Absolute last resort: return the whole cleaned text as the script.
-    // Validator will catch it and we'll retry.
-    return { script: cleaned.slice(0, 4000), attributions: [] };
-  }
+  // Strip any leading/trailing fences just in case.
+  return text.replace(/^\s*```(?:markdown|md)?\s*/i, "").replace(/```\s*$/i, "").trim();
 }
 
-/**
- * Main entry: generate a validated script. Will re-ask Gemini up to 2 times
- * if the first draft violates word count or uses a banned phrase.
- */
 export async function generateZootownMinuteScript(
   stories: ScriptStoryInput[],
 ): Promise<ScriptResult> {
@@ -276,54 +314,63 @@ export async function generateZootownMinuteScript(
 
   const warnings: string[] = [];
   let retryNote: string | undefined;
-  let lastResult: { script: string; attributions: any[] } | null = null;
+  let lastScript = "";
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     const prompt = buildPrompt(stories, retryNote);
-    lastResult = await callGemini(prompt);
-    const wc = countWords(lastResult.script);
-    const banned = findBannedPhrases(lastResult.script);
-    const hasEmDash = /[\u2014\u2013]/.test(lastResult.script);
-    // Attribution check: every story id should have at least one attribution
-    // OR the source name should appear in the script verbatim.
+    lastScript = await callGemini(prompt);
+
+    const wc = countWords(lastScript);
+    const banned = findBannedPhrases(lastScript);
+    const hasEmDash = findEmDashes(lastScript);
+    const badZTAttrib = findZootownHubAttribution(lastScript);
+
+    // Each story should have its own ### heading and be attributed by source slug.
+    const expectedHeadings = ["Anchor intro", "Toss to weather"];
+    const missingHeadings = expectedHeadings.filter(
+      (h) => !new RegExp(`###\\s+${h.replace(/[/]/g, "\\/")}`, "i").test(lastScript),
+    );
+    const storyHeadingCount = (lastScript.match(/^###\s+Story\s+\d/gim) || []).length;
+
     const missingAttrib = stories.filter((s) => {
-      const named = lastResult!.attributions.some((a) => Number(a.story_id) === s.id);
-      const verbatim = lastResult!.script.toLowerCase().includes(s.source_name.toLowerCase());
-      return !(named || verbatim);
+      const slug = (s.source_slug || deriveSourceSlug(s.source_name, s.source_url)).toLowerCase();
+      const hay = lastScript.toLowerCase();
+      return !hay.includes(`[[${slug}]`);
     });
 
     const problems: string[] = [];
-    if (wc < WORD_MIN) problems.push(`Word count ${wc} is below minimum ${WORD_MIN}. Add a sentence or two of source-supported detail.`);
-    if (wc > WORD_MAX) problems.push(`Word count ${wc} exceeds maximum ${WORD_MAX}. Tighten - drop a sentence or shorten transitions.`);
-    if (banned.length) problems.push(`Contains banned phrases: ${banned.map((p) => `"${p}"`).join(", ")}. Remove them and rephrase.`);
-    if (hasEmDash) problems.push(`Contains em-dash or en-dash. Replace with comma or period.`);
-    if (missingAttrib.length) problems.push(`These stories are not attributed by source name: ${missingAttrib.map((s) => `id ${s.id} (${s.source_name})`).join(", ")}. Each story must say the outlet name out loud.`);
+    if (wc < WORD_MIN) problems.push(`Spoken word count ${wc} is below minimum ${WORD_MIN}. Each story needs ~3 body sentences plus a kicker.`);
+    if (wc > WORD_MAX) problems.push(`Spoken word count ${wc} exceeds maximum ${WORD_MAX}. Tighten sentences or shorten kickers.`);
+    if (banned.length) problems.push(`Banned phrases used: ${banned.map((p) => `"${p}"`).join(", ")}. Remove them.`);
+    if (hasEmDash) problems.push(`Em-dash or en-dash used as a pause character. Replace with comma or period. Compound modifiers like "below-market-rate" with hyphens are OK.`);
+    if (badZTAttrib) problems.push(`zootownhub.com used as a story source attribution. It may ONLY appear in the toss-to-weather outro as a destination link.`);
+    if (missingHeadings.length) problems.push(`Missing required headings: ${missingHeadings.join(", ")}.`);
+    if (storyHeadingCount < stories.length) problems.push(`Expected ${stories.length} story headings (### Story 1 ...) but found ${storyHeadingCount}.`);
+    if (missingAttrib.length) problems.push(`Stories missing inline [[slug](url)] attribution: ${missingAttrib.map((s) => `id ${s.id} (slug=${s.source_slug || deriveSourceSlug(s.source_name, s.source_url)})`).join("; ")}.`);
 
     if (problems.length === 0) {
       return {
-        script: lastResult.script,
+        script: lastScript,
         word_count: wc,
         estimated_seconds: Math.round((wc / WPM_TARGET) * 60 * 10) / 10,
-        attributions: lastResult.attributions,
         attempts: attempt,
         warnings,
+        anchor_name: ANCHOR_NAME,
       };
     }
 
     warnings.push(`attempt ${attempt}: ${problems.join(" | ")}`);
-    if (attempt < 3) {
-      retryNote = problems.join("\n");
-    }
+    if (attempt < 3) retryNote = problems.join("\n");
   }
 
-  // Ran out of attempts - return the last try with warnings so caller can decide.
-  const wc = countWords(lastResult!.script);
+  // Out of attempts - return the last try with full warnings.
+  const wc = countWords(lastScript);
   return {
-    script: lastResult!.script,
+    script: lastScript,
     word_count: wc,
     estimated_seconds: Math.round((wc / WPM_TARGET) * 60 * 10) / 10,
-    attributions: lastResult!.attributions,
     attempts: 3,
     warnings,
+    anchor_name: ANCHOR_NAME,
   };
 }
