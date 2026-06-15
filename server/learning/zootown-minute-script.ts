@@ -188,15 +188,26 @@ async function callGemini(prompt: string): Promise<{ script: string; attribution
       // strings that contain double quotes. We parse + repair manually.
     },
   };
-  const res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
+  // Retry on transient 5xx / 429. Gemini 'high demand' (503) is very common.
+  let res: Response | null = null;
+  let lastErr = "";
+  for (let i = 0; i < 4; i++) {
+    res = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) break;
     const t = await res.text().catch(() => "");
-    throw new Error(`Gemini HTTP ${res.status}: ${t.slice(0, 200)}`);
+    lastErr = `Gemini HTTP ${res.status}: ${t.slice(0, 200)}`;
+    if (res.status === 503 || res.status === 429 || res.status >= 500) {
+      // exponential backoff: 2s, 4s, 8s
+      await new Promise((r) => setTimeout(r, 2000 * (1 << i)));
+      continue;
+    }
+    throw new Error(lastErr);
   }
+  if (!res || !res.ok) throw new Error(lastErr || "Gemini unavailable");
   const data = (await res.json()) as any;
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   let cleaned = text.replace(/^\s*```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
