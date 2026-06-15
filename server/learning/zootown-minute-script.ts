@@ -296,13 +296,23 @@ export async function generateZootownMinuteScript(
     source_slug: s.source_slug || deriveSourceSlug(s.source_name, s.source_url),
   }));
 
-  // Generate all 7 sub-segments. Intro + outro in parallel with story
-  // segments. Each call is small enough to never hit truncation.
-  const [introCall, segmentCalls, outroCall] = await Promise.all([
-    callGemini(buildIntroPrompt(enriched), 400),
-    Promise.all(enriched.map((s, i) => callGemini(buildStoryPrompt(s, i), 600))),
-    callGemini(buildOutroPrompt(enriched), 400),
-  ]);
+  // Generate all 7 sub-segments sequentially with a tiny pacing delay.
+  // Gemini's free tier has tight per-minute quotas; firing 7 calls in
+  // parallel trips the 429 rate limit. Sequential keeps us under the
+  // ceiling at the cost of ~30s total latency.
+  const PACING_MS = 600;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  const introCall = await callGemini(buildIntroPrompt(enriched), 400);
+  await sleep(PACING_MS);
+
+  const segmentCalls: GeminiCallResult[] = [];
+  for (let i = 0; i < enriched.length; i++) {
+    segmentCalls.push(await callGemini(buildStoryPrompt(enriched[i], i), 600));
+    await sleep(PACING_MS);
+  }
+
+  const outroCall = await callGemini(buildOutroPrompt(enriched), 400);
 
   const script = [
     introCall.text.trim(),
