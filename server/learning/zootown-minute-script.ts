@@ -166,6 +166,7 @@ ${storyBlock}
 
 OUTPUT
 Return STRICT JSON only. No prose outside the JSON. No markdown fences.
+INSIDE the "script" string value do NOT use any double-quote characters. Paraphrase any quoted source material instead of quoting it. If you must include a possessive 's, that's fine. Double quotes inside the script field break JSON parsing.
 
 {
   "script": "<the full script as a single string, anchor's spoken words only, no stage directions, no [pause] tags>",
@@ -201,11 +202,36 @@ async function callGemini(prompt: string): Promise<{ script: string; attribution
   const fb = cleaned.indexOf("{");
   const lb = cleaned.lastIndexOf("}");
   if (fb >= 0 && lb > fb) cleaned = cleaned.slice(fb, lb + 1);
-  const parsed = JSON.parse(cleaned);
-  return {
-    script: String(parsed.script ?? "").trim(),
-    attributions: Array.isArray(parsed.attributions) ? parsed.attributions : [],
-  };
+
+  // Gemini occasionally returns unescaped quotes inside the script string.
+  // Try strict parse first, then fall back to a tolerant extraction that
+  // pulls the script with a regex.
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      script: String(parsed.script ?? "").trim(),
+      attributions: Array.isArray(parsed.attributions) ? parsed.attributions : [],
+    };
+  } catch (parseErr) {
+    // Tolerant fallback: grab the script field with a non-greedy regex that
+    // stops at the next top-level field. Best effort - logs to caller.
+    const scriptMatch = cleaned.match(/"script"\s*:\s*"([\s\S]*?)"\s*,\s*"attributions"/);
+    if (scriptMatch) {
+      const rawScript = scriptMatch[1]
+        .replace(/\\n/g, " ")
+        .replace(/\\"/g, '"')
+        .replace(/\s+/g, " ")
+        .trim();
+      // Try to extract attributions array too
+      const attribMatch = cleaned.match(/"attributions"\s*:\s*(\[[\s\S]*\])/);
+      let attributions: any[] = [];
+      if (attribMatch) {
+        try { attributions = JSON.parse(attribMatch[1]); } catch { /* ignore */ }
+      }
+      return { script: rawScript, attributions };
+    }
+    throw parseErr;
+  }
 }
 
 /**
